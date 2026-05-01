@@ -295,9 +295,13 @@ bool H264Hub::push_bgrx_frame(const uint8_t* data, int stride_bytes)
 
 bool H264Hub::push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t /*pts_ns*/)
 {
-    if (!started.load(std::memory_order_acquire)) return false;
-    if (!pipeline || !rawsrc || !buf) return false;
-    if (args_.in_w <= 0 || args_.in_h <= 0) return false;
+    if (!buf) return false;
+    if (!started.load(std::memory_order_acquire) ||
+        !pipeline || !rawsrc ||
+        args_.in_w <= 0 || args_.in_h <= 0) {
+        gst_buffer_unref(buf);
+        return false;
+    }
 
     // ------------------------------
     // FPS thinning (assume producer ~30fps)

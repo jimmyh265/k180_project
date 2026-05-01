@@ -1414,20 +1414,32 @@ static void thread_blender_apply(
 #endif
 static thread_local bool b_timing_init = false;
 static thread_local char b_gstpool_acq[64];
+static thread_local char b_gstpool_ok[64];
+static thread_local char b_gstpool_fail[64];
 static thread_local k180::dbgtime::StageTimingAcc b_gstpool_t;
+static thread_local k180::dbgtime::FpsMon b_gstpool_ok_fps;
+static thread_local k180::dbgtime::FpsMon b_gstpool_fail_fps;
 if (!b_timing_init) {
 	std::snprintf(b_gstpool_acq,  sizeof(b_gstpool_acq),  "nvmm_gstpool_acquire_%d", id);
+	std::snprintf(b_gstpool_ok,   sizeof(b_gstpool_ok),   "nvmm_gstpool_acquire_ok_%d", id);
+	std::snprintf(b_gstpool_fail, sizeof(b_gstpool_fail), "nvmm_gstpool_acquire_fail_%d", id);
 	b_gstpool_t = k180::dbgtime::StageTimingAcc(b_gstpool_acq);
+	b_gstpool_ok_fps = k180::dbgtime::FpsMon(b_gstpool_ok);
+	b_gstpool_fail_fps = k180::dbgtime::FpsMon(b_gstpool_fail);
 	b_timing_init = true;
 }
-    auto make_v1234_outbuf = [&]() -> GstBuffer* {
+    auto make_v1234_outbuf = [&](std::uint64_t frame_seq) -> GstBuffer* {
 		
 		
 uint64_t b_acq_0 = k180::dbgtime::now_ns_raw();
         GstBuffer* outbuf = nvmm_gstpool.acquire();
-        if (!outbuf) return nullptr;
 uint64_t b_acq_1 = k180::dbgtime::now_ns_raw();
 b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
+        if (!outbuf) {
+            b_gstpool_fail_fps.tick();
+            return nullptr;
+        }
+        b_gstpool_ok_fps.tick();
 
         bool ok = nvmm_copy_rgba_to_outbuf_cached(c1234_tmp, outbuf, id, apply_stream);
 
@@ -1464,6 +1476,12 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
                                          stream_out_h_1234_1080,
                                          stream_out_w_1234_1080 * 4);
             }
+        }
+
+        if (!k180_buffer_add_frame_tag_meta(outbuf, frame_seq)) {
+            fprintf(stderr,
+                    "[V1234][T%d] failed to add frame tag meta, seq=%llu\n",
+                    id, (unsigned long long)frame_seq);
         }
 
         return outbuf;
@@ -1606,8 +1624,8 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
 		
         const bool want_s1 = mgr.want_push({ StreamGroup::S1, StreamView::V1234 });
         const bool want_s2 = mgr.want_push({ StreamGroup::S2, StreamView::V1234 });
-        GstBuffer* out_s1 = want_s1 ? make_v1234_outbuf() : nullptr;
-        GstBuffer* out_s2 = want_s2 ? make_v1234_outbuf() : nullptr;
+        GstBuffer* out_s1 = want_s1 ? make_v1234_outbuf(cur[0]->seq) : nullptr;
+        GstBuffer* out_s2 = want_s2 ? make_v1234_outbuf(cur[0]->seq) : nullptr;
 
         // Release source camera frames before entering H265 downstream push.
         // nvmm_copy_rgba_to_outbuf_cached() has already synchronized apply_stream
