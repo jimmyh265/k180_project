@@ -1,0 +1,15 @@
+# External dependency checked out separately
+ByteTrack/
+
+# Build outputs
+build/
+*.o
+*.d
+*.so
+
+# Local/editor files
+.codex
+.codex/
+*.swp
+*.engine
+*~
