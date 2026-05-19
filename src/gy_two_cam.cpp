@@ -142,12 +142,8 @@ using namespace k180::streambuilder;
 using namespace k180::osd;
 // using namespace k180::dbgtime;
 
-using k180::gstdbg::RateMon;
-using k180::gstdbg::padprobe_rate;
 // using namespace k180::runtime;
 // using namespace k180::K180Runtime;
-static thread_local TimeTesting tt;
-
 HubManager mgr;
 
 std::thread trig_thread;
@@ -156,7 +152,6 @@ std::mutex bd_pool_mtx, bd_prep_mtx;
 std::condition_variable blend_prep;
 
 std::atomic<bool> keep_running(true);
-
 
 #if 0
 // GPU NoBlender , CV_8UC3, no stream
@@ -1349,8 +1344,6 @@ static void thread_blender_apply(
     cv::cuda::Stream apply_cv_stream;
     cudaStream_t apply_stream = (cudaStream_t)apply_cv_stream.cudaPtr();
 
-    // FramePtr last[4];
-    // bool last_valid[4] = { false, false, false, false };
     static thread_local NvmmGstPool nvmm_gstpool;
     static thread_local bool nvmm_gstpool_ok = false;
     if (!nvmm_gstpool_ok) {
@@ -1361,89 +1354,17 @@ static void thread_blender_apply(
         }
         nvmm_gstpool_ok = true;
     }
-#if 0 //測試 cur 釋放時機
-	auto push_one_v1234 = [&](StreamGroup g, std::uint64_t frame_seq) {
-		const int sid = stream_index({ g, StreamView::V1234 });
 
-		GstBuffer* outbuf = nvmm_gstpool.acquire();
-		if (!outbuf) return;
+    static thread_local k180::dbgtime::FpsMon infer_drop_no_slot_fps(
+        "infer_submit_DROP_NO_SLOT");
+    static thread_local k180::dbgtime::FpsMon infer_drop_q_full_fps(
+        "infer_submit_DROP_Q_FULL");
 
-		bool ok = nvmm_copy_rgba_to_outbuf_cached(c1234_tmp, outbuf, id, apply_stream);
-		if (!ok) {
-			gst_buffer_unref(outbuf);
-			return;
-		}
-
-		// 保留：確保 copy 完成後，再補 video meta / frame tag / push
-		cudaError_t ce = cudaStreamSynchronize(apply_stream);
-
-		if (ce != cudaSuccess) {
-			fprintf(stderr,
-					"[V1234][T%d] cudaStreamSynchronize failed before meta attach: %s\n",
-					id, cudaGetErrorString(ce));
-			gst_buffer_unref(outbuf);
-			return;
-		}
-
-		{
-			auto it = tl_nvmm_cache.find(outbuf);
-			if (it != tl_nvmm_cache.end() && it->second.inited) {
-				const int pitch = static_cast<int>(it->second.dstPitch);
-				nvmm_add_video_meta_once(outbuf, id,
-										 stream_out_w_1234_1080,
-										 stream_out_h_1234_1080,
-										 pitch);
-			} else {
-				nvmm_add_video_meta_once(outbuf, id,
-										 stream_out_w_1234_1080,
-										 stream_out_h_1234_1080,
-										 stream_out_w_1234_1080 * 4);
-			}
-		}
-
-		// 新增：掛上 frame_seq，供 mux src probe 對齊 detection slot
-		if (!k180_buffer_add_frame_tag_meta(outbuf, frame_seq)) {
-			fprintf(stderr,
-					"[V1234][T%d] failed to add frame tag meta, seq=%llu\n",
-					id, (unsigned long long)frame_seq);
-			// 不 return：影片仍然照送，只是這幀後續可能無法對應到 OSD
-		}
-
-		mgr.hubs[sid].push_nvmm_rgba_buffer(outbuf);
-
-		// 保留原邏輯：
-		// 若 push_nvmm_rgba_buffer 內部接手 GstBuffer ref，這裡不要 unref。
-		// 目前依你既有程式風格，先維持不在此 gst_buffer_unref(outbuf)。
-	};
-#endif
-static thread_local bool b_timing_init = false;
-static thread_local char b_gstpool_acq[64];
-static thread_local char b_gstpool_ok[64];
-static thread_local char b_gstpool_fail[64];
-static thread_local k180::dbgtime::StageTimingAcc b_gstpool_t;
-static thread_local k180::dbgtime::FpsMon b_gstpool_ok_fps;
-static thread_local k180::dbgtime::FpsMon b_gstpool_fail_fps;
-if (!b_timing_init) {
-	std::snprintf(b_gstpool_acq,  sizeof(b_gstpool_acq),  "nvmm_gstpool_acquire_%d", id);
-	std::snprintf(b_gstpool_ok,   sizeof(b_gstpool_ok),   "nvmm_gstpool_acquire_ok_%d", id);
-	std::snprintf(b_gstpool_fail, sizeof(b_gstpool_fail), "nvmm_gstpool_acquire_fail_%d", id);
-	b_gstpool_t = k180::dbgtime::StageTimingAcc(b_gstpool_acq);
-	b_gstpool_ok_fps = k180::dbgtime::FpsMon(b_gstpool_ok);
-	b_gstpool_fail_fps = k180::dbgtime::FpsMon(b_gstpool_fail);
-	b_timing_init = true;
-}
     auto make_v1234_outbuf = [&](std::uint64_t frame_seq) -> GstBuffer* {
-		
-		
-uint64_t b_acq_0 = k180::dbgtime::now_ns_raw();
         GstBuffer* outbuf = nvmm_gstpool.acquire();
-uint64_t b_acq_1 = k180::dbgtime::now_ns_raw();
-b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
         if (!outbuf) {
-            b_gstpool_fail_fps.tick();
             return nullptr;
         }
-        b_gstpool_ok_fps.tick();
 
         bool ok = nvmm_copy_rgba_to_outbuf_cached(c1234_tmp, outbuf, id, apply_stream);
 
@@ -1451,20 +1372,7 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
             gst_buffer_unref(outbuf);
             return nullptr;
         }
-		
-		// start 這段是我自己加的 
-/*		cudaError_t ce = cudaStreamSynchronize(apply_stream);
 
-		if (ce != cudaSuccess) {
-			fprintf(stderr,
-					"[V1234][T%d] cudaStreamSynchronize failed before meta attach: %s\n",
-					id, cudaGetErrorString(ce));
-			gst_buffer_unref(outbuf);
-			return nullptr;
-		}
-		// end 這段是我自己加的 
-*/
-  	// meta ONCE
         {
             auto it = tl_nvmm_cache.find(outbuf);
             if (it != tl_nvmm_cache.end() && it->second.inited) {
@@ -1500,16 +1408,11 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
 
         if (!blender_apply_sync.wait_all(pipeline_sync_stop)) break;
 	
-         // --- 先更新 last-good（不阻塞） ---
-        FramePtr cur[4];	// = { last[0], last[1], last[2], last[3] };
-        // bool cur_valid[4] = { last_valid[0], last_valid[1], last_valid[2], last_valid[3] };
+        // Pull the latest frame from each camera without keeping older frames alive.
+        FramePtr cur[4];
         bool cur_valid[4] = {false,false,false,false};
 
         FramePtr tmp;
-        // if (q0->try_pop_latest(tmp)) { cur[0] = tmp; last[0] = tmp; last_valid[0] = true; cur_valid[0] = true; }
-        // if (q1->try_pop_latest(tmp)) { cur[1] = tmp; last[1] = tmp; last_valid[1] = true; cur_valid[1] = true; }
-        // if (q2->try_pop_latest(tmp)) { cur[2] = tmp; last[2] = tmp; last_valid[2] = true; cur_valid[2] = true; }
-        // if (q3->try_pop_latest(tmp)) { cur[3] = tmp; last[3] = tmp; last_valid[3] = true; cur_valid[3] = true; }
         if (q0->try_pop_latest(tmp)) { cur[0] = tmp; cur_valid[0] = true; }
         if (q1->try_pop_latest(tmp)) { cur[1] = tmp; cur_valid[1] = true; }
         if (q2->try_pop_latest(tmp)) { cur[2] = tmp; cur_valid[2] = true; }
@@ -1570,7 +1473,6 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
 
 		for (int i = 0; i < 4; ++i) {
 			ptr->feed(warp_rgba_comp[i], v.mask_warped_g[front][i], v.corners_sd[i], apply_cv_stream);
-			// ptr->feed(cur[i]->warp_rgba, v.mask_warped_g[front][i], v.corners_sd[i], apply_cv_stream);
 		}
 
 
@@ -1581,12 +1483,11 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
             k180::ai::ai_should_run_detector_this_frame(k180::ai::g_ai_rt, cur[0]->seq)) {
 
             const int infer_slot_idx = try_acquire_infer_slot(cec);
-			
-			if (infer_slot_idx < 0) {
-                log_info_fmt("[infer_submit][DROP_NO_SLOT] seq=%llu",
-                             (unsigned long long)cur[0]->seq);
-			} else {				 
-                auto& infer_slot = cec.infer_pool[infer_slot_idx];
+
+            if (infer_slot_idx < 0) {
+                infer_drop_no_slot_fps.tick();
+            } else {
+	                auto& infer_slot = cec.infer_pool[infer_slot_idx];
 
                 cudaError_t ce = cudaMemcpy2DAsync(
                     infer_slot.pano_rgba.ptr<unsigned char>(),
@@ -1598,29 +1499,27 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
                     cudaMemcpyDeviceToDevice,
                     apply_stream);
 
-                if (ce != cudaSuccess) {
-                    fprintf(stderr,
-                            "[thread_blender_apply] cudaMemcpy2DAsync to infer slot failed: %s\n",
-                            cudaGetErrorString(ce));
-                    infer_slot.busy.store(false, std::memory_order_release);
-                } else {
+	                if (ce != cudaSuccess) {
+	                    fprintf(stderr,
+	                            "[thread_blender_apply] cudaMemcpy2DAsync to infer slot failed: %s\n",
+	                            cudaGetErrorString(ce));
+	                    infer_slot.busy.store(false, std::memory_order_release);
+	                } else {
                     ce = cudaEventRecord(infer_slot.copy_done, apply_stream);
-                    if (ce != cudaSuccess) {
-                        fprintf(stderr,
-                                "[thread_blender_apply] cudaEventRecord(copy_done) failed: %s\n",
-                                cudaGetErrorString(ce));
-                        infer_slot.busy.store(false, std::memory_order_release);
-                    } else {
+	                    if (ce != cudaSuccess) {
+	                        fprintf(stderr,
+	                                "[thread_blender_apply] cudaEventRecord(copy_done) failed: %s\n",
+	                                cudaGetErrorString(ce));
+	                        infer_slot.busy.store(false, std::memory_order_release);
+	                    } else {
                         InferJob job;
                         job.slot_idx = infer_slot_idx;
                         job.frame_seq = cur[0]->seq;
 
-                        if (!cec.infer_q->try_push(job)) {
-							log_info_fmt("[infer_submit][DROP_Q_FULL] seq=%llu slot=%d",
-                                         (unsigned long long)cur[0]->seq,
-                                         infer_slot_idx);
-                            infer_slot.busy.store(false, std::memory_order_release);
-                        }
+		                        if (!cec.infer_q->try_push(job)) {
+		                            infer_drop_q_full_fps.tick();
+		                            infer_slot.busy.store(false, std::memory_order_release);
+		                        }
                     }
                 }
             }
@@ -1652,18 +1551,12 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
             mgr.hubs[stream_index(s2_v1234)]
                 .push_nvmm_rgba_buffer(out_s2);
         }
-#if 0 //測試 cur 釋放時機
-		if (want_s1) push_one_v1234(StreamGroup::S1, cur[0]->seq);
-		if (want_s2) push_one_v1234(StreamGroup::S2, cur[0]->seq);
-#endif
 
         {
             std::lock_guard<std::mutex> lock_(bd_prep_mtx);
             blender_prepare_queue.push(ptr);
         }
         blend_prep.notify_one();
-// static thread_local k180::dbgtime::FpsMon s_fps("thread_blender_apply_loop");
-// s_fps.tick();
     }
 	log_info_fmt("thread_blender_apply exit");
 }
@@ -1709,72 +1602,18 @@ static void capture_thread(int id,
 						   CamCtx& cam,
 						   CC_entry_Ctx& cec)
 {
+    (void)cec;
     std::uint32_t sync_count = 0;
-	k180::runtime::cuda_set_current_for_thread("capture_thread");
-	// cam.warp_pool.init(cam.warp_pool_slots, cam.in_h, cam.in_w, CV_8UC4);
-	cam.warp_pool.init(cam.warp_pool_slots, cam.warp_h, cam.warp_w, CV_8UC4);
+    k180::runtime::cuda_set_current_for_thread("capture_thread");
+    cam.warp_pool.init(cam.warp_pool_slots, cam.warp_h, cam.warp_w, CV_8UC4);
     StreamView sv = static_cast<StreamView>(static_cast<int>(StreamView::V1) + id);
 
-
-static thread_local char s_pull_tag[64];
-static thread_local char s_wrap_tag[64];
-static thread_local char s_pool_tag[64];
-static thread_local char s_remap_tag[64];
-static thread_local bool s_timing_init = false;
-
-static thread_local k180::dbgtime::StageTimingAcc s_pull_t;
-static thread_local k180::dbgtime::StageTimingAcc s_wrap_t;
-static thread_local k180::dbgtime::StageTimingAcc s_pool_t;
-static thread_local k180::dbgtime::StageTimingAcc s_remap_t;
-
-if (!s_timing_init) {
-	std::snprintf(s_pull_tag,  sizeof(s_pull_tag),  "capture_pull_%d", id);
-	std::snprintf(s_wrap_tag,  sizeof(s_wrap_tag),  "capture_wrap_rgba_%d", id);
-	std::snprintf(s_pool_tag,  sizeof(s_pool_tag),  "capture_warp_pool_%d", id);
-	std::snprintf(s_remap_tag, sizeof(s_remap_tag), "capture_remap_submit_%d", id);
-
-	s_pull_t  = k180::dbgtime::StageTimingAcc(s_pull_tag);
-	s_wrap_t  = k180::dbgtime::StageTimingAcc(s_wrap_tag);
-	s_pool_t  = k180::dbgtime::StageTimingAcc(s_pool_tag);
-	s_remap_t = k180::dbgtime::StageTimingAcc(s_remap_tag);
-
-	s_timing_init = true;
-}
-	
-// char na_1[200], na_2[200], na_3[200], na_4[200];
-// uint64_t iii = 0;
-// cv::Mat cam_read_cMat;
-// cuda::GpuMat cam_read_gMat;
     while (running.load(std::memory_order_relaxed)) {
-
         if (!camera_trig.wait(sync_count, pipeline_sync_stop)) break;
-// if( id==0 ){
-// tt.ts_fps_beg3 = std::chrono::steady_clock::now();
-// }	
-uint64_t t_pull_0 = k180::dbgtime::now_ns_raw();
-GstSample* sample = gst_app_sink_try_pull_sample(cam.sink, 200 * GST_MSECOND);
-uint64_t t_pull_1 = k180::dbgtime::now_ns_raw();
-s_pull_t.add_ns(t_pull_1 - t_pull_0);
-        // GstSample* sample = gst_app_sink_try_pull_sample(cam.sink, 200 * GST_MSECOND);
+
+        GstSample* sample = gst_app_sink_try_pull_sample(cam.sink, 200 * GST_MSECOND);
         if (!sample) continue;
 
-static thread_local char s_cap_tag[64];
-static thread_local bool s_cap_tag_init = false;
-static thread_local k180::dbgtime::FpsMon s_cap_fps;
-if (!s_cap_tag_init) {
-    std::snprintf(s_cap_tag, sizeof(s_cap_tag), "capture_thread_%d_loop", id);
-    s_cap_fps = k180::dbgtime::FpsMon(s_cap_tag);
-    s_cap_tag_init = true;
-}
-s_cap_fps.tick();
-
-
-// if( id==0 ){
-// tt.ts_fps_end3 = std::chrono::steady_clock::now();
-// tt.fps_duration3 = (std::chrono::duration_cast<std::chrono::microseconds>(tt.ts_fps_end3 - tt.ts_fps_beg3).count()/1000000.0);
-// log_info_fmt("capture_thread = %f", tt.fps_duration3);
-// tt.ts_fps_beg3 = tt.ts_fps_end3;
-// }
         auto f = std::make_shared<FrameItem>();
         f->sample = sample;            // owning ref
         f->seq    = ++seq_counter;
@@ -1785,29 +1624,14 @@ s_cap_fps.tick();
             continue;
         }
 
-
-		// wrap NVMM->CUDA 到 s.fr.rgba, 12us
-        // if (!gstbuffer_to_gpu_rgba(buf, f->fr, id)) {
-            // f.reset(); // unref sample + release_frame()
-            // continue;
-        // }
-
-uint64_t t_wrap_0 = k180::dbgtime::now_ns_raw();
-bool wrap_ok = gstbuffer_to_gpu_rgba(buf, f->fr, id);
-uint64_t t_wrap_1 = k180::dbgtime::now_ns_raw();
-s_wrap_t.add_ns(t_wrap_1 - t_wrap_0);
-
-if (!wrap_ok) {
-	f.reset(); // unref sample + release_frame()
-	continue;
-}
+        bool wrap_ok = gstbuffer_to_gpu_rgba(buf, f->fr, id);
+        if (!wrap_ok) {
+            f.reset(); // unref sample + release_frame()
+            continue;
+        }
 
         // ---- acquire warp slot from pool ----
-        // int slot = cam.warp_pool.try_acquire();
-uint64_t t_pool_0 = k180::dbgtime::now_ns_raw();
-int slot = cam.warp_pool.try_acquire();
-uint64_t t_pool_1 = k180::dbgtime::now_ns_raw();
-s_pool_t.add_ns(t_pool_1 - t_pool_0);
+        int slot = cam.warp_pool.try_acquire();
         if (slot < 0) {
             f.reset();
             continue;
@@ -1816,8 +1640,8 @@ s_pool_t.add_ns(t_pool_1 - t_pool_0);
         f->warp_pool = &cam.warp_pool;
         f->warp_pool_idx = slot;
         f->warp_rgba = cam.warp_pool.mat(slot); // shallow handle (no alloc)
-#if 0
-cudaStream_t s = cv::cuda::StreamAccessor::getStream(cam.stream);
+#if 0	// 測試自行開發的 remap
+	cudaStream_t s = cv::cuda::StreamAccessor::getStream(cam.stream);
 
 if (!launchRemapRGBA_Bilinear_ConstBorder(
         f->fr.rgba,
@@ -1826,38 +1650,23 @@ if (!launchRemapRGBA_Bilinear_ConstBorder(
         cam.g_map2,
         s)) {
     f.reset();
-    continue;
-}
+	    continue;
+	}
 #endif
-uint64_t t_remap_0 = k180::dbgtime::now_ns_raw();
-		cv::cuda::remap(
-			f->fr.rgba, f->warp_rgba, cam.g_map1, cam.g_map2,
-			cv::INTER_LINEAR, cv::BORDER_REFLECT, cv::Scalar(), cam.stream
-		);// cv::BORDER_CONSTANT,BORDER_REFLECT
+        cv::cuda::remap(
+            f->fr.rgba, f->warp_rgba, cam.g_map1, cam.g_map2,
+            cv::INTER_LINEAR, cv::BORDER_REFLECT, cv::Scalar(), cam.stream
+        );// cv::BORDER_CONSTANT,BORDER_REFLECT
 
-		// 下面這四步需要 20us
-		f->warp_done.record(cam.stream);
-uint64_t t_remap_1 = k180::dbgtime::now_ns_raw();
-s_remap_t.add_ns(t_remap_1 - t_remap_0);
-		f->warp_done_valid = true;
-		q_blend.try_push(f);
-		
-static thread_local char s_blend_tag[64];
-static thread_local bool s_blend_tag_init = false;
-static thread_local k180::dbgtime::FpsMon s_to_blend_fps;
-if (!s_blend_tag_init) {
-    std::snprintf(s_blend_tag, sizeof(s_blend_tag), "capture_to_blend_%d", id);
-    s_to_blend_fps = k180::dbgtime::FpsMon(s_blend_tag);
-    s_blend_tag_init = true;
-}
-s_to_blend_fps.tick();
+        // 下面這四步需要 20us
+        f->warp_done.record(cam.stream);
+        f->warp_done_valid = true;
+        q_blend.try_push(f);
+        blender_apply_sync.signal_id(id);
+        q_seam.try_push(f);
+        if (id == 1) { cc2bright.try_push(f); }
 
-		blender_apply_sync.signal_id(id);
-		q_seam.try_push(f);
-		if (id == 1) { cc2bright.try_push(f); }
-// #endif
-
-		// 下面這四步需要 30us
+        // 下面這四步需要 30us
         const StreamKey s1_key{StreamGroup::S1, sv};
         const StreamKey s2_key{StreamGroup::S2, sv};
         const uint64_t push_now_ns = k180::dbgtime::now_ns_mono();
@@ -2077,7 +1886,7 @@ static bool build_cam_pipeline(const std::string& dev,
     gst_app_sink_set_emit_signals(cam.sink, FALSE);
     gst_app_sink_set_drop(cam.sink, TRUE);
     gst_app_sink_set_max_buffers(cam.sink, 2);	// 不能設 4，會慢 2張,  如果 exposure_tun_val(trigger_shutter) 是 16666, 這邊就必須設為 2，不然 gst_app_sink_try_pull_sample 會卡。如果 exposure_tun_val(trigger_shutter) 是 10000, 則這邊可以設為 1, 上面 pipe 裡也要一起改
-	
+
     // 2) set PLAYING first (your camera requires v4l2 init AFTER this)
     GstStateChangeReturn r = gst_element_set_state(cam.pipeline, GST_STATE_PLAYING);
     GSTD("[CAM%d] set_state(PLAYING) ret=%d\n", cam_id, (int)r);
@@ -2268,6 +2077,7 @@ cec.seam_finder = create_seam_finder( k180::runtime::rt().sdp );
 								1,
 								cec.cams[1].cc2bright.get(),
 								std::ref(cec.running));
+
 // #endif
     return 0;
 }
@@ -2299,7 +2109,7 @@ static void request_stop_and_wakeup_all(CC_entry_Ctx& cec)
     auto& v = k180::runtime::rt().sdv;
     v.find_seam_ready = true;
 }
-
+#if 0
 static void stop_pipeline_safely(GstElement* pipeline, const char* tag)
 {
     if (!pipeline) return;
@@ -2329,7 +2139,7 @@ static void stop_pipeline_safely(GstElement* pipeline, const char* tag)
         logp("set_state(NULL) done");
     }
 }
-
+#endif
 static void shutdown_all(CC_entry_Ctx& cec,
                          GstRTSPServer* server,
                          GstRTSPSessionPool* session,
@@ -2338,9 +2148,9 @@ static void shutdown_all(CC_entry_Ctx& cec,
 {
     request_stop_and_wakeup_all(cec);
     k180::record_cleanup::stop_runtime_cleanup();
-if (rtsp_attach_id != 0) {
-    g_source_remove(rtsp_attach_id);
-}
+	if (rtsp_attach_id != 0) {
+	    g_source_remove(rtsp_attach_id);
+	}
     // 1) 先停 queue，喚醒 consumer
     for (auto& cam : cec.cams) {
         if (cam.cc2bright) cam.cc2bright->close();
@@ -2724,7 +2534,7 @@ k180::ai::init_ai_runtime_from_cfg(cfggg.objectdet);
         return ret;
     }
     k180::record_cleanup::start_runtime_cleanup("/data");
-// #endif
+	// #endif
     // ✅ trigger thread now needs cec
     trig_thread = std::thread(trigger_thread, std::ref(cec));
 
