@@ -137,6 +137,7 @@ bool H265Hub::create(const H265HubCreateArgs& a)
 		" sync=false async=false ";
 #endif
     // ---- main pipeline ----
+const int iframe_interval = (a.fps > 0) ? a.fps : 1;
 std::string pipe_desc =
     "nvstreammux name=mux batch-size=1 width=" + std::to_string(a.in_w) +
     " height=" + std::to_string(a.in_h) + " live-source=1 "
@@ -144,8 +145,8 @@ std::string pipe_desc =
     "! nvvidconv "
     "! video/x-raw(memory:NVMM),format=NV12,width=" + std::to_string(a.out_w) +
     ",height=" + std::to_string(a.out_h) + " "
-    "! nvv4l2h265enc name=enc insert-sps-pps=1 vbv-size=160000 iframeinterval=30 bitrate=" +
-    std::to_string(a.bitrate_bps) + " maxperf-enable=1 "
+    "! nvv4l2h265enc name=enc insert-sps-pps=1 vbv-size=160000 iframeinterval=" +
+    std::to_string(iframe_interval) + " bitrate=" + std::to_string(a.bitrate_bps) + " maxperf-enable=1 "
     "! h265parse config-interval=1 "
     "! video/x-h265,stream-format=byte-stream,alignment=au "
     "! tee name=t "
@@ -262,8 +263,10 @@ if (osd_shared_) {
 
 	drop_acc_.store(0, std::memory_order_relaxed);
 	frame_idx_.store(0, std::memory_order_relaxed);
-t0_ns_ = 0;
-#if defined(GST_DBG_MSG) && GST_DBG_MSG
+	t0_ns_.store(0, std::memory_order_relaxed);
+	last_pts_.store(0, std::memory_order_relaxed);
+	throttle_next_ns_.store(0, std::memory_order_relaxed);
+	#if defined(GST_DBG_MSG) && GST_DBG_MSG
     g_printerr("[HUB] created: udp_port=%d record=%d ring_slots=%d\n",
                a.udp_port, (int)a.enable_record, a.ring_slots);
 #endif
@@ -735,32 +738,21 @@ bool H265Hub::push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t /*pts_ns*/)
     if (!buf) return false;
     if (!started.load(std::memory_order_acquire) ||
         !pipeline || !rawsrc ||
-        args_.in_w <= 0 || args_.in_h <= 0) {
+        args_.in_w <= 0 || args_.in_h <= 0 || args_.fps <= 0) {
         gst_buffer_unref(buf);
         return false;
     }
 
-    // ------------------------------
-    // FPS thinning (assume producer ~30fps)
-    // target fps: 20/15/10/5/1
-    // ------------------------------
-    constexpr int IN_FPS = 30;
     const int out_fps = args_.fps;
-	// printf("========== %d ========\n", out_fps);
-
-    if (out_fps < IN_FPS) {
-        int acc = drop_acc_.load(std::memory_order_relaxed);
-        acc += out_fps;
-
-        if (acc < IN_FPS) {
-            drop_acc_.store(acc, std::memory_order_relaxed);
-            gst_buffer_unref(buf);           // IMPORTANT: avoid leak on drop
-            return false;
-        }
-
-        acc -= IN_FPS;
-        drop_acc_.store(acc, std::memory_order_relaxed);
+    const GstClockTime dur = gst_util_uint64_scale_int(1, GST_SECOND, out_fps);
+    if (dur == 0) {
+        gst_buffer_unref(buf);
+        return false;
     }
+    const uint64_t now = now_ns_mono();
+
+    // FPS gating is done before the producer calls this function.
+    // Do not thin frames here, or H265 appsrc/encoder/record can be starved.
 
     // (optional) pipeline state guard (same idea as your old code)
     {
@@ -834,10 +826,6 @@ bool H265Hub::push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t /*pts_ns*/)
 #endif
 	
 	// 第四種方法：在第三種方法上，增加 atomic 操作, 理論應該不需要 atomic，因為每個 stream 都是獨立的 hub, 但我腦累，懶得想了
-	GstClockTime dur = gst_util_uint64_scale_int(1, GST_SECOND, out_fps);
-
-	uint64_t now = now_ns_mono();
-
 	// init t0 once
 	uint64_t t0 = t0_ns_.load(std::memory_order_relaxed);
 	if (t0 == 0) {
@@ -884,15 +872,18 @@ HubManager::HubManager()
     for (int i = 0; i < kStreams; ++i) {
         viewers[i].store(0, std::memory_order_relaxed);
         record_enabled[i].store(false, std::memory_order_relaxed);
+        h265_gate[i].configure(60);
     }
     for (int i = 0; i < kH264Streams; ++i) {
         viewers_h264[i].store(0, std::memory_order_relaxed);
+        h264_gate[i].configure(60);
     }
 }
 
 void HubManager::viewer_inc(StreamKey k)
 {
     int idx = stream_index(k);
+    h265_gate[idx].reset();
     int v = viewers[idx].fetch_add(1, std::memory_order_relaxed) + 1;
 #if defined(GST_DBG_MSG) && GST_DBG_MSG		
 	GSTD("[RTSP] viewers[%s_%d]++ => %d\n",
@@ -921,6 +912,20 @@ bool HubManager::want_push(StreamKey k) const
     return viewers[idx].load(std::memory_order_relaxed) > 0
         || record_enabled[idx].load(std::memory_order_relaxed);
 }
+
+void HubManager::set_h265_fps(StreamKey k, int fps)
+{
+    int idx = stream_index(k);
+    if (idx < 0 || idx >= kStreams) return;
+    h265_gate[idx].configure(fps);
+}
+
+bool HubManager::allow_push_h265(StreamKey k, uint64_t now_ns)
+{
+    int idx = stream_index(k);
+    if (idx < 0 || idx >= kStreams) return false;
+    return h265_gate[idx].allow(now_ns);
+}
 #if 0
 void HubManager::set_record_mode(int recorded_mode)
 {
@@ -947,6 +952,8 @@ void HubManager::set_record_mode(int recorded_mode)
 void HubManager::viewer_inc_h264(StreamKey k)
 {
     int idx = h264_index(k.g, k.v);
+    if (idx < 0 || idx >= kH264Streams) return;
+    h264_gate[idx].reset();
     int v = viewers_h264[idx].fetch_add(1, std::memory_order_relaxed) + 1;
 #if defined(GST_DBG_MSG) && GST_DBG_MSG
     GSTD("[RTSP] viewers_h264[%s_%d]++ => %d\n", group_name(k.g), view_number(k.v), v);
@@ -971,6 +978,20 @@ bool HubManager::want_push_h264(StreamKey k) const
 {
     int idx = h264_index(k.g, k.v);
     return viewers_h264[idx].load(std::memory_order_relaxed) > 0;
+}
+
+void HubManager::set_h264_fps(StreamKey k, int fps)
+{
+    int idx = h264_index(k.g, k.v);
+    if (idx < 0 || idx >= kH264Streams) return;
+    h264_gate[idx].configure(fps);
+}
+
+bool HubManager::allow_push_h264(StreamKey k, uint64_t now_ns)
+{
+    int idx = h264_index(k.g, k.v);
+    if (idx < 0 || idx >= kH264Streams) return false;
+    return h264_gate[idx].allow(now_ns);
 }
 
 void HubManager::stop_all_h264()

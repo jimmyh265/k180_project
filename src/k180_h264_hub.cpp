@@ -93,6 +93,7 @@ bool H264Hub::create(const H264HubCreateArgs& a)
     }
 	// int gop_sec = 1;  // 1 秒一個 keyframe（可改 2）
 	// int iframe = std::max(1, a.fps * gop_sec);
+    const int iframe_interval = (a.fps > 0) ? a.fps : 1;
     // appsrc(raw(memory:NVMM) RGBA) -> nvvidconv -> NVMM NV12 -> nvv4l2h264enc -> h264parse -> udpsink(loopback)
     std::string pipe_desc =
         "appsrc name=rawsrc is-live=true format=time do-timestamp=false block=false "
@@ -101,7 +102,7 @@ bool H264Hub::create(const H264HubCreateArgs& a)
         "! queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0 "
         "! nvvidconv "
         "! video/x-raw(memory:NVMM),format=NV12,width=" + std::to_string(a.out_w) + ",height=" + std::to_string(a.out_h) + " "
-        "! nvv4l2h264enc name=enc insert-sps-pps=1 iframeinterval=30 bitrate=" + std::to_string(a.bitrate_bps) + " maxperf-enable=1 "
+        "! nvv4l2h264enc name=enc insert-sps-pps=1 iframeinterval=" + std::to_string(iframe_interval) + " bitrate=" + std::to_string(a.bitrate_bps) + " maxperf-enable=1 "
         "! h264parse config-interval=1 "
         "! video/x-h264,stream-format=byte-stream,alignment=au "
         "! udpsink name=rtsp_udp host=127.0.0.1 port=" + std::to_string(a.udp_port) + " sync=false async=false";
@@ -175,6 +176,8 @@ bool H264Hub::create(const H264HubCreateArgs& a)
 
     drop_acc_.store(0, std::memory_order_relaxed);
     frame_idx_.store(0, std::memory_order_relaxed);
+    t0_ns_.store(0, std::memory_order_relaxed);
+    last_pts_.store(0, std::memory_order_relaxed);
 
     return true;
 }
@@ -298,30 +301,21 @@ bool H264Hub::push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t /*pts_ns*/)
     if (!buf) return false;
     if (!started.load(std::memory_order_acquire) ||
         !pipeline || !rawsrc ||
-        args_.in_w <= 0 || args_.in_h <= 0) {
+        args_.in_w <= 0 || args_.in_h <= 0 || args_.fps <= 0) {
         gst_buffer_unref(buf);
         return false;
     }
 
-    // ------------------------------
-    // FPS thinning (assume producer ~30fps)
-    // ------------------------------
-    constexpr int IN_FPS = 30;
     const int out_fps = args_.fps;
-
-    if (out_fps < IN_FPS) {
-        int acc = drop_acc_.load(std::memory_order_relaxed);
-        acc += out_fps;
-
-        if (acc < IN_FPS) {
-            drop_acc_.store(acc, std::memory_order_relaxed);
-            gst_buffer_unref(buf);   // IMPORTANT: avoid leak on drop
-            return false;
-        }
-
-        acc -= IN_FPS;
-        drop_acc_.store(acc, std::memory_order_relaxed);
+    const GstClockTime dur = gst_util_uint64_scale_int(1, GST_SECOND, out_fps);
+    if (dur == 0) {
+        gst_buffer_unref(buf);
+        return false;
     }
+    const uint64_t now = now_ns_mono_h264();
+
+    // FPS gating is done before the producer calls this function.
+    // Do not thin frames here, or H264 appsrc/encoder can be starved.
 
     // (optional) pipeline state guard
     {
@@ -356,10 +350,6 @@ bool H264Hub::push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t /*pts_ns*/)
         return false;
     }
 #endif
-
-	GstClockTime dur = gst_util_uint64_scale_int(1, GST_SECOND, out_fps);
-
-	uint64_t now = now_ns_mono_h264();
 
 	// init t0 once
 	uint64_t t0 = t0_ns_.load(std::memory_order_relaxed);
@@ -399,4 +389,3 @@ bool H264Hub::push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t /*pts_ns*/)
 }
 
 } // namespace k180
-

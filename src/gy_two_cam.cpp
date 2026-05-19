@@ -1623,10 +1623,15 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
             }
         }
 		
-        const bool want_s1 = mgr.want_push({ StreamGroup::S1, StreamView::V1234 });
-        const bool want_s2 = mgr.want_push({ StreamGroup::S2, StreamView::V1234 });
-        GstBuffer* out_s1 = want_s1 ? make_v1234_outbuf(cur[0]->seq) : nullptr;
-        GstBuffer* out_s2 = want_s2 ? make_v1234_outbuf(cur[0]->seq) : nullptr;
+        const StreamKey s1_v1234{ StreamGroup::S1, StreamView::V1234 };
+        const StreamKey s2_v1234{ StreamGroup::S2, StreamView::V1234 };
+        const uint64_t push_now_ns = k180::dbgtime::now_ns_mono();
+        const bool push_s1 = mgr.want_push(s1_v1234) &&
+                             mgr.allow_push_h265(s1_v1234, push_now_ns);
+        const bool push_s2 = mgr.want_push(s2_v1234) &&
+                             mgr.allow_push_h265(s2_v1234, push_now_ns);
+        GstBuffer* out_s1 = push_s1 ? make_v1234_outbuf(cur[0]->seq) : nullptr;
+        GstBuffer* out_s2 = push_s2 ? make_v1234_outbuf(cur[0]->seq) : nullptr;
 
         // Release source camera frames before entering H265 downstream push.
         // nvmm_copy_rgba_to_outbuf_cached() has already synchronized apply_stream
@@ -1637,11 +1642,11 @@ b_gstpool_t.add_ns(b_acq_1 - b_acq_0);
         }
 
         if (out_s1) {
-            mgr.hubs[stream_index({ StreamGroup::S1, StreamView::V1234 })]
+            mgr.hubs[stream_index(s1_v1234)]
                 .push_nvmm_rgba_buffer(out_s1);
         }
         if (out_s2) {
-            mgr.hubs[stream_index({ StreamGroup::S2, StreamView::V1234 })]
+            mgr.hubs[stream_index(s2_v1234)]
                 .push_nvmm_rgba_buffer(out_s2);
         }
 #if 0 //測試 cur 釋放時機
@@ -1850,19 +1855,23 @@ s_to_blend_fps.tick();
 // #endif
 
 		// 下面這四步需要 30us
-        if (mgr.want_push({StreamGroup::S1, sv})) {
+        const StreamKey s1_key{StreamGroup::S1, sv};
+        const StreamKey s2_key{StreamGroup::S2, sv};
+        const uint64_t push_now_ns = k180::dbgtime::now_ns_mono();
+
+        if (mgr.want_push(s1_key) && mgr.allow_push_h265(s1_key, push_now_ns)) {
             GstBuffer* pushbuf = gst_buffer_ref(buf);
-            mgr.hubs[ stream_index({StreamGroup::S1, sv}) ].push_nvmm_rgba_buffer(pushbuf);
+            mgr.hubs[ stream_index(s1_key) ].push_nvmm_rgba_buffer(pushbuf);
         }
-        if (mgr.want_push({StreamGroup::S2, sv})) {
+        if (mgr.want_push(s2_key) && mgr.allow_push_h265(s2_key, push_now_ns)) {
             GstBuffer* pushbuf = gst_buffer_ref(buf);
-            mgr.hubs[ stream_index({StreamGroup::S2, sv}) ].push_nvmm_rgba_buffer(pushbuf);
+            mgr.hubs[ stream_index(s2_key) ].push_nvmm_rgba_buffer(pushbuf);
         }
-        if (mgr.want_push_h264({StreamGroup::S1, sv})) {
+        if (mgr.want_push_h264(s1_key) && mgr.allow_push_h264(s1_key, push_now_ns)) {
             GstBuffer* pushbuf = gst_buffer_ref(buf);
             mgr.hubs_h264[ h264_index(StreamGroup::S1, sv) ].push_nvmm_rgba_buffer(pushbuf);
         }
-        if (mgr.want_push_h264({StreamGroup::S2, sv})) {
+        if (mgr.want_push_h264(s2_key) && mgr.allow_push_h264(s2_key, push_now_ns)) {
             GstBuffer* pushbuf = gst_buffer_ref(buf);
             mgr.hubs_h264[ h264_index(StreamGroup::S2, sv) ].push_nvmm_rgba_buffer(pushbuf);
         }

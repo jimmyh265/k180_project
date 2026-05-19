@@ -92,6 +92,52 @@ inline constexpr int h264_index(StreamGroup g, StreamView v) {
     return static_cast<int>(g) * kH264Views + (static_cast<int>(v) - 1);
 }
 
+struct StreamFpsGate {
+    std::atomic<int> fps{60};
+    std::atomic<uint64_t> last_ns{0};
+    std::atomic<uint64_t> credit_ns{0};
+
+    void configure(int f) {
+        fps.store(f, std::memory_order_relaxed);
+        reset();
+    }
+
+    void reset() {
+        last_ns.store(0, std::memory_order_relaxed);
+        credit_ns.store(0, std::memory_order_relaxed);
+    }
+
+    bool allow(uint64_t now_ns) {
+        const int f = fps.load(std::memory_order_relaxed);
+        if (f <= 0) return false;
+        if (f >= 60) return true;
+
+        const uint64_t period_ns = 1000000000ull / static_cast<uint64_t>(f);
+        uint64_t last = last_ns.load(std::memory_order_relaxed);
+        if (last == 0 || now_ns < last) {
+            last_ns.store(now_ns, std::memory_order_relaxed);
+            credit_ns.store(period_ns, std::memory_order_relaxed);
+            return true;
+        }
+
+        uint64_t credit = credit_ns.load(std::memory_order_relaxed);
+        credit += now_ns - last;
+        last_ns.store(now_ns, std::memory_order_relaxed);
+
+        const uint64_t max_credit = period_ns * 2;
+        if (credit > max_credit) credit = max_credit;
+
+        if (credit >= period_ns) {
+            credit -= period_ns;
+            credit_ns.store(credit, std::memory_order_relaxed);
+            return true;
+        }
+
+        credit_ns.store(credit, std::memory_order_relaxed);
+        return false;
+    }
+};
+
 // =========================
 // Hub Manager (10 hubs)
 // =========================
@@ -105,6 +151,8 @@ struct HubManager {
 	int udp_ports[kStreams] = {0};
     std::atomic<int> viewers[kStreams];       // viewer count per stream
     std::atomic<bool> record_enabled[kStreams];
+    StreamFpsGate h265_gate[kStreams];
+    StreamFpsGate h264_gate[kH264Streams];
 
     HubManager();
 
@@ -116,6 +164,10 @@ struct HubManager {
 	
     bool want_push(StreamKey k) const;
 	bool want_push_h264(StreamKey k) const;
+    void set_h265_fps(StreamKey k, int fps);
+    void set_h264_fps(StreamKey k, int fps);
+    bool allow_push_h265(StreamKey k, uint64_t now_ns);
+    bool allow_push_h264(StreamKey k, uint64_t now_ns);
     // helper to set record_enabled based on cfggg.recorded
     // recorded_mode: 0=off, 1=record s1_1234, 2=record s1_1..4
     // void set_record_mode(int recorded_mode);

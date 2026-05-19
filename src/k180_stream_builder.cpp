@@ -258,6 +258,7 @@ a.osd_shared = osd_shared;
             }
 
             a.fps         = scfg.fps;
+            mgr.set_h265_fps(k, a.fps);
             a.bitrate_bps = bitrate_for(v, scfg.datarate_bps);
 
             a.udp_port = mgr.udp_ports[sid];
@@ -300,6 +301,7 @@ a.osd_shared = osd_shared;
             choose_out_size_for_one(scfg.resolution, a.out_w, a.out_h);
 
             a.fps         = scfg.fps;
+            mgr.set_h264_fps({g, v}, a.fps);
             a.bitrate_bps = bitrate_for(v, scfg.datarate_bps);
             a.udp_port    = mgr.udp_ports_h264[sid];
 
