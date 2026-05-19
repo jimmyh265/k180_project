@@ -118,7 +118,7 @@
 
 #undef HAVE_OPENCV_CUDALEGACY
 #define ENABLE_LOG 1
-#define FW_VER "1.60.9"	// 1.22 fix program exit procedure, 1.23 減少 調光 log, 
+#define FW_VER "1.60.11"	// 1.22 fix program exit procedure, 1.23 減少 調光 log, 
 // 1.60.4  60fps with inference
 /*
 1.60.5 加入了 infer thread
