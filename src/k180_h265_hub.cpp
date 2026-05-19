@@ -209,6 +209,16 @@ if (osd_shared_) {
         return false;
     }
 
+    enc = gst_bin_get_by_name(GST_BIN(pipeline), "enc");
+    if (!enc) {
+        g_printerr("[HUB] failed to get enc from pipeline\n");
+        gst_object_unref(rawsrc);
+        rawsrc = nullptr;
+        gst_object_unref(pipeline);
+        pipeline = nullptr;
+        return false;
+    }
+
     // ---- bus watch ----
     bus = gst_element_get_bus(pipeline);
     gst_bus_add_signal_watch(bus);
@@ -231,7 +241,6 @@ if (osd_shared_) {
 
     // enc src pad
     {
-        GstElement* enc = gst_bin_get_by_name(GST_BIN(pipeline), "enc");
         if (enc) {
             GstPad* p = gst_element_get_static_pad(enc, "src");
             if (p) {
@@ -239,7 +248,6 @@ if (osd_shared_) {
                                   padprobe_rate, &mon_enc_, NULL);
                 gst_object_unref(p);
             }
-            gst_object_unref(enc);
         }
     }
 
@@ -299,6 +307,10 @@ void H265Hub::cleanup_()
         gst_object_unref(rawsrc);
         rawsrc = nullptr;
     }
+    if (enc) {
+        gst_object_unref(enc);
+        enc = nullptr;
+    }
     if (osd_shared_) {
         k180::osd::osd_reset_all_results(*osd_shared_);
         k180::osd::osd_destroy_slots(*osd_shared_);
@@ -320,6 +332,45 @@ void HubManager::stop_all()
     for (int i = 0; i < kStreams; ++i) {
         hubs[i].stop();
     }
+}
+
+bool H265Hub::request_idr()
+{
+    if (!pipeline || !enc) return false;
+    if (!started.load(std::memory_order_acquire)) return false;
+
+    bool ok = false;
+
+    if (g_signal_lookup("force-idr", G_OBJECT_TYPE(enc)) != 0) {
+        g_signal_emit_by_name(enc, "force-idr");
+        ok = true;
+    } else if (g_signal_lookup("force-key-unit", G_OBJECT_TYPE(enc)) != 0) {
+        g_signal_emit_by_name(enc, "force-key-unit");
+        ok = true;
+    }
+
+    if (!ok) {
+        GstPad* sinkpad = gst_element_get_static_pad(enc, "sink");
+        if (sinkpad) {
+            GstClockTime now = gst_util_get_timestamp();
+            GstEvent* ev = gst_video_event_new_downstream_force_key_unit(
+                GST_CLOCK_TIME_NONE,
+                GST_CLOCK_TIME_NONE,
+                now,
+                TRUE,
+                0
+            );
+            if (ev) {
+                ok = gst_pad_send_event(sinkpad, ev);
+            }
+            gst_object_unref(sinkpad);
+        }
+    }
+
+#if defined(GST_DBG_MSG) && GST_DBG_MSG
+    GSTD("[H265] request_idr -> %s\n", ok ? "OK" : "FAIL");
+#endif
+    return ok;
 }
 
 void H265Hub::stop_rec(int wait_ms)
@@ -926,6 +977,14 @@ bool HubManager::allow_push_h265(StreamKey k, uint64_t now_ns)
     if (idx < 0 || idx >= kStreams) return false;
     return h265_gate[idx].allow(now_ns);
 }
+
+void HubManager::request_idr_h265(StreamKey k)
+{
+    const int idx = stream_index(k);
+    if (idx < 0 || idx >= kStreams) return;
+    hubs[idx].request_idr();
+}
+
 #if 0
 void HubManager::set_record_mode(int recorded_mode)
 {

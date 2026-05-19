@@ -2729,6 +2729,7 @@ sigctx.cec  = &cec;
 
     server = gst_rtsp_server_new();
     g_object_set(server, "service", "8554", NULL);
+    attach_rtsp_client_tracking(server, mgr);
     mounts = gst_rtsp_server_get_mount_points(server);
     attach_factories(mounts, mgr);
     g_object_unref(mounts);

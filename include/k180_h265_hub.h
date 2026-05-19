@@ -48,6 +48,7 @@ struct H265HubCreateArgs {
 struct H265Hub {
     GstElement* pipeline = nullptr;
     GstElement* rawsrc   = nullptr;
+    GstElement* enc      = nullptr;
     GstBus*     bus      = nullptr;
 	std::atomic<uint64_t> t0_ns_{0};
 	std::atomic<uint64_t> last_pts_{0};
@@ -66,6 +67,7 @@ struct H265Hub {
     void stop();
 	void stop_rec(int wait_ms);
 	void cleanup_();
+    bool request_idr();
 
     // memcpy + ring buffer
     bool push_rgba_frame(const uint8_t* data, int stride_bytes, uint64_t pts_ns = 0);
@@ -161,7 +163,8 @@ struct HubManager {
     void viewer_dec(StreamKey k);
     void viewer_inc_h264(StreamKey k);
     void viewer_dec_h264(StreamKey k);
-	
+    void request_idr_h265(StreamKey k);
+
     bool want_push(StreamKey k) const;
 	bool want_push_h264(StreamKey k) const;
     void set_h265_fps(StreamKey k, int fps);
