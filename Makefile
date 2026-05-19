@@ -64,6 +64,7 @@ SRCS_CPP  = \
 	$(SRC_DIR)/k180_pipeline_sync.cpp \
 	$(SRC_DIR)/k180_h264_hub.cpp \
 	$(SRC_DIR)/k180_h265_hub.cpp \
+	$(SRC_DIR)/k180_record_cleanup.cpp \
 	$(SRC_DIR)/k180_rtsp_attach.cpp \
 	$(SRC_DIR)/k180_stream_builder.cpp \
 	$(SRC_DIR)/k180_osd_meta.cpp \

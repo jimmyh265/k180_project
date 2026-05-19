@@ -89,6 +89,7 @@
 #include "k180_rtsp_attach.h" 
 #include "k180_stream_builder.h" 
 #include "k180_stream_key.h" 
+#include "k180_record_cleanup.h"
 #include "k180_stage_queue.h"
 #include "k180_stage_sync.h"
 #include "k180_frame_item.h" 
@@ -2314,6 +2315,7 @@ static void shutdown_all(CC_entry_Ctx& cec,
 						 guint rtsp_attach_id)
 {
     request_stop_and_wakeup_all(cec);
+    k180::record_cleanup::stop_runtime_cleanup();
 if (rtsp_attach_id != 0) {
     g_source_remove(rtsp_attach_id);
 }
@@ -2662,6 +2664,7 @@ int main(int argc, char *argv[])
     init_logging("grand_yeah");
     log_info_fmt("Service started version %s", FW_VER);
     renew_fw_info();
+    k180::record_cleanup::cleanup_once("/data");
 
     std::string err;
     auto st = user_cfg_load_from_file(cfggg, RF_REG_FILE, &err);
@@ -2692,6 +2695,7 @@ k180::ai::init_ai_runtime_from_cfg(cfggg.objectdet);
         std::cerr << "cc_entry_point_all failed: " << ret << "\n";
         return ret;
     }
+    k180::record_cleanup::start_runtime_cleanup("/data");
 // #endif
     // ✅ trigger thread now needs cec
     trig_thread = std::thread(trigger_thread, std::ref(cec));
