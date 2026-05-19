@@ -38,8 +38,8 @@ void user_cfg_set_defaults(UserConfig& cfg) {
 
 static CfgStatus validate_stream(const char* name, const StreamConfig& s, std::string* err) {
     static const int allowed_res[] = {720, 1080};
-    static const int allowed_fps[] = {1, 5, 10, 15, 20, 30, 40, 50, 55, 59, 60};
-    static const double allowed_datarate_mbps[] = {1, 1.6, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48};
+    static const int allowed_fps[] = {1, 5, 10, 15, 20, 30, 60};
+    static const double allowed_datarate_mbps[] = {1, 1.6, 2, 3, 4, 6, 8, 10, 12, 16};
 
     if (!is_one_of_int(s.resolution, allowed_res, (int)(sizeof(allowed_res)/sizeof(allowed_res[0])))) {
         if (err) {
