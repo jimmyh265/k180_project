@@ -10,6 +10,7 @@ build/
 # Local/editor files
 .codex
 .codex/
+log/
 *.swp
 *.engine
 *~
