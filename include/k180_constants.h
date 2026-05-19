@@ -22,7 +22,7 @@ inline constexpr int stream_out_w_one_720 = 1280, stream_out_h_one_720 = 720;
 inline constexpr int stream_out_w_half_1080 = stream_out_w_1234_1080/2;
 inline constexpr int stream_out_w_half_720 = stream_out_w_1234_720/2;
 
-inline constexpr uint8_t shutter_interval = 17;	//33;	// 迴圈裡的動作 ex set_control 需要 2.xms
+inline constexpr int trigger_interval_us = 16667;   //16667; // 60fps ~= 16.667ms
 /*
 shutter_interval = 17; 需要搭配 inline int exposure_tun_val = 8000;，輸出 fps 可達 58, 59, 若高於 8000, 則FPS不達58 59
 20 來不及 blender
@@ -46,6 +46,8 @@ inline constexpr int CTRL_TRIGGER_WB_RGAIN   = 0x009819c4;
 inline constexpr int CTRL_TRIGGER_WB_BGAIN   = 0x009819c5;
 inline constexpr int CTRL_TRIGGER_DELAY      = 0x009819c9;
 inline constexpr int CTRL_SW_TRIGGER		= 0x009819cb;
+
+inline constexpr int CTRL_MANUAL_SHUTTER   = 0x0098199d;
 
 inline constexpr int BLENDER_POOL_SIZE = 3;
 inline constexpr int THREAD_APPLY_COUNT = 1;

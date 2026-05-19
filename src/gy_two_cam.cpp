@@ -326,7 +326,8 @@ struct CamCtx {
 
     std::thread t_cap;
     std::atomic<uint64_t> seq{0};
-	
+    std::atomic<int> applied_trigger_shutter_us{k180::brighttuner::exposure_tun_val};
+
     int in_w = 0;
     int in_h = 0;
 
@@ -560,7 +561,9 @@ struct NvmmGstPool {
     GstBuffer* acquire() {
         if (!pool_) return nullptr;
         GstBuffer* b = nullptr;
-		//  if (gst_buffer_pool_acquire_buffer(pool_, &b, nullptr) != GST_FLOW_OK) return nullptr; // -- 然後加入下面三行
+        // Keep the live path non-blocking: if downstream still owns all output
+        // NVMM buffers, drop this frame instead of stalling thread_blender_apply
+        // and holding input camera samples longer.
         GstBufferPoolAcquireParams params{};
         params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
         if (gst_buffer_pool_acquire_buffer(pool_, &b, &params) != GST_FLOW_OK) return nullptr;
@@ -1919,7 +1922,7 @@ bool single_mipi_camera_init(int cam_id, int fd_l)
 
     set_control_nolock(fd_l, CTRL_TRIGGER_MODE, 0, "camera_init CTRL_TRIGGER_MODE1");
     sleep(2);
-    set_control_nolock(fd_l, CTRL_TRIGGER_MODE, 2, "camera_init CTRL_TRIGGER_MODE2");
+    set_control_nolock(fd_l, CTRL_TRIGGER_MODE, 1, "camera_init CTRL_TRIGGER_MODE2");
     sleep(1);
 
     set_control_nolock(fd_l, CTRL_TRIGGER_WB_MODE, 1, "camera_init CTRL_TRIGGER_WB_MODE1");
@@ -1927,8 +1930,9 @@ bool single_mipi_camera_init(int cam_id, int fd_l)
     set_control_nolock(fd_l, CTRL_TRIGGER_WB_MODE, 2, "camera_init CTRL_TRIGGER_WB_MODE2");
     usleep(1000);
 
-// 這邊有一個很詭異的issue，這邊的200原本是寫5000，但剛好現在設定的exposure_tun_val=5000，導致開機時，這個值不會被設定，然後FPS就一直15，顯然就是 shutter 怪怪的。所以我故意設一個很低的 200,
-    set_control_nolock(fd_l, CTRL_TRIGGER_SHUTTER, 200, "camera_init CTRL_TRIGGER_SHUTTER1");
+    // Prime trigger_shutter with a different value first; this driver may not latch
+    // the target shutter correctly when the control is written only once.
+    set_control_nolock(fd_l, CTRL_TRIGGER_SHUTTER, 1000000, "camera_init CTRL_TRIGGER_SHUTTER1");
     usleep(1000);
     set_control_nolock(fd_l, CTRL_TRIGGER_SHUTTER, k180::brighttuner::exposure_tun_val, "camera_init CTRL_TRIGGER_SHUTTER2");
     usleep(1000);
@@ -1986,27 +1990,34 @@ void init_blender(){
 	}
 }
 
-static inline void apply_pending(int cam_idx, int fd)
+static inline void apply_pending(int cam_idx, CamCtx& cam)
 {
     int v = 0;
+    int fd = cam.fd;
+    if (fd < 0) return;
 
     if (k180::brighttuner::consume_exposure(cam_idx, v)) {
-        set_control_nolock(fd, CTRL_TRIGGER_SHUTTER, v, "expo");
+        if (set_control_nolock(fd, CTRL_TRIGGER_SHUTTER, v, "expo")) {
+            cam.applied_trigger_shutter_us.store(v, std::memory_order_release);
+        }
     }
     if (k180::brighttuner::consume_gain(cam_idx, v)) {
         set_control_nolock(fd, CTRL_TRIGGER_GAIN, v, "gain");
     }
 }
 
-bool cam_do_trigger(int cam_idx, CamCtx& cam)
+bool cam_do_trigger(int cam_idx, CamCtx& cam, int& shutter_used_us)
 {
     int fd  = cam.fd;
     if (fd < 0) return false;
 
+    shutter_used_us = cam.applied_trigger_shutter_us.load(std::memory_order_acquire);
+    if (shutter_used_us <= 0) shutter_used_us = trigger_interval_us;
+
     bool ok = set_control_nolock(fd, CTRL_SW_TRIGGER, 1, "trigger");
 
     // trigger 後再 apply：降低 trigger 當下延遲
-    apply_pending(cam_idx, fd);
+    apply_pending(cam_idx, cam);
     return ok;
 }
 
@@ -2030,9 +2041,9 @@ static bool build_cam_pipeline(const std::string& dev,
     // 1) build gstreamer pipeline
     char pipe[1024];
     std::snprintf(pipe, sizeof(pipe),
-        "nvv4l2camerasrc device=%s cap-buffers=16 ! "	// 12 -> 16, fps會降速 懷疑是 gst_app_sink_try_pull_sample
+        "nvv4l2camerasrc device=%s cap-buffers=12 ! "
         "video/x-raw(memory:NVMM),width=%d,height=%d,format=UYVY ! "
-        "nvvidconv output-buffers=32 ! video/x-raw(memory:NVMM),format=RGBA ! "	// 8 -> 32
+        "nvvidconv output-buffers=8 ! video/x-raw(memory:NVMM),format=RGBA ! "
         "appsink name=sink_%d sync=false max-buffers=2 drop=true",
         dev.c_str(), in_w, in_h, cam_id);
 
@@ -2083,7 +2094,7 @@ static bool build_cam_pipeline(const std::string& dev,
     // 4) queues
 	// Jetson 的 nvv4l2camerasrc / nvvidconv / appsink 這條，底下通常有固定數量的 NVMM buffers, f 如果被持有太久，gst_app_sink_try_pull_sample 會卡住 
     cam.cc2bright = std::make_unique<StageQueue<FramePtr>>(1);	// 只能設 1，如果Q太大，f 會被保留太久，
-    cam.q_blend   = std::make_unique<StageQueue<FramePtr>>(2);
+    cam.q_blend   = std::make_unique<StageQueue<FramePtr>>(1);
     cam.q_seam    = std::make_unique<StageQueue<FramePtr>>(1);
 
     // cam.v4l2_inited = false;
@@ -2146,6 +2157,8 @@ cec.seam_finder = create_seam_finder( k180::runtime::rt().sdp );
             cec.running.store(false, std::memory_order_relaxed);
             return 11;
         }
+        cam.applied_trigger_shutter_us.store(k180::brighttuner::exposure_tun_val,
+                                             std::memory_order_release);
         // cam.v4l2_inited = true;
     }
     log_info_fmt("camera v4l2 init (post-PLAYING) done");
@@ -2552,24 +2565,30 @@ void init_sd_para(){
 
 void trigger_thread(CC_entry_Ctx& cec)
 {
-    const auto interval = std::chrono::milliseconds(shutter_interval);
+    const auto base_interval = std::chrono::microseconds(trigger_interval_us);
     using clock = std::chrono::steady_clock;
-    auto next = clock::now() + interval;
+    auto next = clock::now() + base_interval;
 
     while (keep_running.load(std::memory_order_relaxed)) {
 
         std::this_thread::sleep_until(next);
 
+        int next_interval_us = trigger_interval_us;
+
         // ioctl trigger	// 下面兩個工作需要 2ms
         for (int i = 0; i < tmmm_nu; ++i) {
-            cam_do_trigger(i, cec.cams[i]);
+            int shutter_used_us = trigger_interval_us;
+            if (!cam_do_trigger(i, cec.cams[i], shutter_used_us)) {
+                log_error_fmt("[TRIGGER][FAIL] cam=%d", i);
+            }
+            if (shutter_used_us > next_interval_us) {
+                next_interval_us = shutter_used_us;
+            }
         }
 
         camera_trig.signal_all();
 
-static thread_local k180::dbgtime::FpsMon s_fps("trigger_thread");
-s_fps.tick();
-
+        const auto interval = std::chrono::microseconds(next_interval_us);
         next += interval;
 
         auto now = clock::now();
