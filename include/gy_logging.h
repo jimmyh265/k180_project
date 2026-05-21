@@ -6,10 +6,6 @@
 #include <cerrno>
 #include <cstring>
 
-#ifdef USE_SYSLOG
-#include <syslog.h>
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,7 +14,7 @@ extern "C" {
 void init_logging(const char *ident);
 void close_logging(void);
 
-// printf-style logging
+// stdout/stderr logging
 void log_info_fmt(const char *fmt, ...);
 void log_error_fmt(const char *fmt, ...);            // 不含 errno
 void log_error_errno_fmt(const char *fmt, ...);     // 含 errno

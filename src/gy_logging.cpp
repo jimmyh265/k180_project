@@ -1,13 +1,13 @@
 #include "gy_logging.h"
 
-#ifdef USE_SYSLOG
-
 void init_logging(const char *ident) {
-    openlog(ident, LOG_PID | LOG_CONS, LOG_USER);
+    fprintf(stdout, "[%s] Logging started\n", ident ? ident : "grand_yeah");
+    fflush(stdout);
 }
 
 void close_logging() {
-    closelog();
+    fprintf(stdout, "Logging closed\n");
+    fflush(stdout);
 }
 
 void log_info_fmt(const char *fmt, ...) {
@@ -16,7 +16,8 @@ void log_info_fmt(const char *fmt, ...) {
     va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    syslog(LOG_INFO, "%s", buf);
+    fprintf(stdout, "INFO: %s\n", buf);
+    fflush(stdout);
 }
 
 void log_error_fmt(const char *fmt, ...) {
@@ -25,53 +26,17 @@ void log_error_fmt(const char *fmt, ...) {
     va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    syslog(LOG_ERR, "%s", buf);
+    fprintf(stderr, "ERROR: %s\n", buf);
+    fflush(stderr);
 }
 
 void log_error_errno_fmt(const char *fmt, ...) {
+    int saved_errno = errno;
     char buf[1024];
     va_list args;
     va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    syslog(LOG_ERR, "%s: %s", buf, strerror(errno));
+    fprintf(stderr, "ERROR: %s: %s\n", buf, strerror(saved_errno));
+    fflush(stderr);
 }
-
-#else  // USE_SYSLOG not defined → printf 模式
-
-void init_logging(const char *ident) {
-    printf("[%s] Logging started\n", ident);
-}
-
-void close_logging() {
-    printf("Logging closed\n");
-}
-
-void log_info_fmt(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    printf("INFO: %s\n", buf);
-}
-
-void log_error_fmt(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    printf("ERROR: %s\n", buf);
-}
-
-void log_error_errno_fmt(const char *fmt, ...) {
-    char buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    printf("ERROR: %s: %s\n", buf, strerror(errno));
-}
-
-#endif
