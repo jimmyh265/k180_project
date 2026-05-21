@@ -174,8 +174,6 @@ bool H264Hub::create(const H264HubCreateArgs& a)
     gst_bus_add_signal_watch(bus);
     g_signal_connect(bus, "message", G_CALLBACK(on_bus_msg), nullptr);
 
-    drop_acc_.store(0, std::memory_order_relaxed);
-    frame_idx_.store(0, std::memory_order_relaxed);
     t0_ns_.store(0, std::memory_order_relaxed);
     last_pts_.store(0, std::memory_order_relaxed);
 
@@ -222,80 +220,6 @@ void H264Hub::stop()
     cleanup_();
 }
 
-bool H264Hub::push_bgrx_frame(const uint8_t* data, int stride_bytes)
-{
-    if (!started.load(std::memory_order_acquire)) return false;
-    if (!pipeline || !rawsrc || !data) return false;
-    if (args_.in_w <= 0 || args_.in_h <= 0) return false;
-    if (stride_bytes <= 0) return false;
-
-    // fps thinning (producer assumed ~30fps)
-    constexpr int IN_FPS = 30;
-    const int out_fps = args_.fps;
-    if (out_fps < IN_FPS) {
-        int acc = drop_acc_.load(std::memory_order_relaxed);
-        acc += out_fps;
-        if (acc < IN_FPS) {
-            drop_acc_.store(acc, std::memory_order_relaxed);
-            return false;
-        }
-        acc -= IN_FPS;
-        drop_acc_.store(acc, std::memory_order_relaxed);
-    }
-
-    const size_t frame_size = (size_t)stride_bytes * (size_t)args_.in_h;
-    if (frame_size == 0) return false;
-
-    if (ring_.bytes_per_frame() == 0) {
-        const int slots = (args_.ring_slots > 0) ? args_.ring_slots : 8;
-        if (!ring_.init((size_t)slots, frame_size)) {
-            g_printerr("[H264] ring init FAILED slots=%d frame_size=%zu\n", slots, frame_size);
-            return false;
-        }
-        ring_.reset_stats();
-    } else if (ring_.bytes_per_frame() != frame_size) {
-        g_printerr("[H264] frame_size changed (%zu -> %zu). Need stop/recreate.\n",
-                   ring_.bytes_per_frame(), frame_size);
-        return false;
-    }
-
-    size_t idx = 0;
-    uint8_t* dst = ring_.try_acquire_slot(&idx);
-    if (!dst) return false;
-
-    std::memcpy(dst, data, frame_size);
-
-    GstBuffer* buf = ring_.wrap_slot_as_buffer(idx, frame_size);
-    if (!buf) return false;
-
-    // add VideoMeta (stride)
-    {
-        gsize offsets[GST_VIDEO_MAX_PLANES] = {0,0,0,0};
-        gint  strides[GST_VIDEO_MAX_PLANES] = {stride_bytes,0,0,0};
-        gst_buffer_add_video_meta_full(
-            buf, (GstVideoFrameFlags)0,
-            GST_VIDEO_FORMAT_BGRx,
-            (guint)args_.in_w, (guint)args_.in_h,
-            1, offsets, strides
-        );
-    }
-
-    const GstClockTime dur = gst_util_uint64_scale_int(1, GST_SECOND, out_fps);
-    const uint64_t fi = frame_idx_.fetch_add(1, std::memory_order_relaxed);
-    const GstClockTime pts = fi * dur;
-
-    GST_BUFFER_PTS(buf)      = pts;
-    GST_BUFFER_DTS(buf)      = pts;
-    GST_BUFFER_DURATION(buf) = dur;
-
-    GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(rawsrc), buf);
-    if (ret != GST_FLOW_OK) {
-        gst_buffer_unref(buf);
-        return false;
-    }
-    return true;
-}
-
 bool H264Hub::push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t /*pts_ns*/)
 {
     if (!buf) return false;
@@ -326,30 +250,6 @@ bool H264Hub::push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t /*pts_ns*/)
             return false;
         }
     }
-
-    // ------------------------------
-    // timestamps (based on OUTPUT fps)
-    // appsrc must be format=time + do-timestamp=false
-    // ------------------------------
-#if 0
-    const GstClockTime dur = gst_util_uint64_scale_int(1, GST_SECOND, out_fps);
-    const uint64_t fi = frame_idx_.fetch_add(1, std::memory_order_relaxed);
-    const GstClockTime pts = (GstClockTime)(fi * dur);
-
-    buf = gst_buffer_make_writable(buf);
-    GST_BUFFER_PTS(buf)      = pts;
-    GST_BUFFER_DTS(buf)      = pts;
-    GST_BUFFER_DURATION(buf) = dur;
-
-    // ------------------------------
-    // push (appsrc takes ownership of buf on success)
-    // ------------------------------
-    GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(rawsrc), buf);
-    if (ret != GST_FLOW_OK) {
-        gst_buffer_unref(buf);
-        return false;
-    }
-#endif
 
 	// init t0 once
 	uint64_t t0 = t0_ns_.load(std::memory_order_relaxed);

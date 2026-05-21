@@ -100,7 +100,6 @@ static inline void dump_h264_hub_create_args(FILE* out, const H264HubCreateArgs&
         "%s  fps=%d\n"
         "%s  bitrate_bps=%d\n"
         "%s  udp_port=%d\n"
-        "%s  ring_slots=%d\n"
         "%s}\n",
         prefix,
         prefix, a.in_w, a.in_h,
@@ -108,7 +107,6 @@ static inline void dump_h264_hub_create_args(FILE* out, const H264HubCreateArgs&
         prefix, a.fps,
         prefix, a.bitrate_bps,
         prefix, a.udp_port,
-        prefix, a.ring_slots,
         prefix
     );
 }
@@ -129,7 +127,6 @@ static inline void dump_h265_hub_create_args(FILE* out, const H265HubCreateArgs&
         "%s  enable_record=%s\n"
         "%s  record_mp4=%s\n"
         "%s  record_path='%s'\n"
-        "%s  ring_slots=%d\n"
         "%s}\n",
         prefix,
         prefix, a.in_w, a.in_h,
@@ -140,7 +137,6 @@ static inline void dump_h265_hub_create_args(FILE* out, const H265HubCreateArgs&
         prefix, tf(a.enable_record),
         prefix, tf(a.record_mp4),
         prefix, a.record_path.c_str(),
-        prefix, a.ring_slots,
         prefix
     );
 }

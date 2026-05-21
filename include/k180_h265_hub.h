@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <string>
 
-#include "k180_gst_ringbuf.h"
 #include "k180_stream_key.h"
 #include "k180_gst_dbg.h"
 #include "k180_h264_hub.h"
@@ -39,9 +38,6 @@ struct H265HubCreateArgs {
     std::string record_path;
     std::string record_prefix;
 
-    // ring
-    int ring_slots = 8;
-	
 	k180::osd::OsdShared* osd_shared = nullptr;
 };
 
@@ -52,15 +48,9 @@ struct H265Hub {
     GstBus*     bus      = nullptr;
 	std::atomic<uint64_t> t0_ns_{0};
 	std::atomic<uint64_t> last_pts_{0};
-    GstFrameRing ring_;
-	std::atomic<uint64_t> frame_idx_{0};
 
     H265HubCreateArgs args_;
     std::atomic<bool> started{false};
-	
-    std::atomic<int>      throttle_last_fps_{0};
-    std::atomic<uint64_t> throttle_next_ns_{0}; // next allowed push time (monotonic ns)
-    std::atomic<uint64_t> pts_base_ns_{0};      // base time for PTS (monotonic ns)
 	
     bool create(const H265HubCreateArgs& a);
     bool start();
@@ -69,9 +59,6 @@ struct H265Hub {
 	void cleanup_();
     bool request_idr();
 
-    // memcpy + ring buffer
-    bool push_rgba_frame(const uint8_t* data, int stride_bytes, uint64_t pts_ns = 0);
-    bool push_bgrx_frame(const uint8_t* data, int stride_bytes, uint64_t pts_ns = 0);
     bool push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t pts_ns = 0);
 	
 #if defined(GST_DBG_MSG) && GST_DBG_MSG
@@ -80,7 +67,6 @@ struct H265Hub {
     k180::gstdbg::RateMon mon_udp_;
 #endif
 
-	std::atomic<int> drop_acc_{0};     // fps限流 累加器（0..29）
 	RecNameCtx rec_ctx;
 	
 	k180::osd::OsdShared* osd_shared_ = nullptr;
