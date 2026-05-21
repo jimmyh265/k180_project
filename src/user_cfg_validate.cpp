@@ -1,4 +1,5 @@
 // user_cfg_validate.cpp
+#include "k180_constants.h"
 #include "user_def_json.h"
 #include <sstream>
 #include <cmath>
@@ -70,10 +71,19 @@ static CfgStatus validate_stream(const char* name, const StreamConfig& s, std::s
         return CfgStatus::VALIDATION_FAIL;
     }
 
-    if (!is_one_of_int(s.fps, allowed_fps, (int)(sizeof(allowed_fps)/sizeof(allowed_fps[0])))) {
+    if (!is_one_of_int(s.fps, allowed_fps, (int)(sizeof(allowed_fps)/sizeof(allowed_fps[0]))) ||
+        s.fps > k180::constants::max_stream_fps) {
         if (err) {
             std::ostringstream oss;
-            oss << name << ".fps invalid: " << s.fps << " (allowed: 5,10,15,20,25,30)";
+            oss << name << ".fps invalid: " << s.fps << " (allowed: ";
+            bool first = true;
+            for (int fps : allowed_fps) {
+                if (fps > k180::constants::max_stream_fps) continue;
+                if (!first) oss << ", ";
+                oss << fps;
+                first = false;
+            }
+            oss << ")";
             *err = oss.str();
         }
         return CfgStatus::VALIDATION_FAIL;
@@ -264,4 +274,3 @@ CfgStatus user_cfg_validate(const UserConfig& cfg, std::string* err) {
 	
     return CfgStatus::OK;
 }
-

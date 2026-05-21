@@ -2,8 +2,22 @@
 #include <cstdint>
 #include <string_view>
 
+#ifndef K180_PROFILE_NAME
+#define K180_PROFILE_NAME "default"
+#endif
+
+#ifndef K180_TRIGGER_INTERVAL_US
+#define K180_TRIGGER_INTERVAL_US 16667
+#endif
+
+#ifndef K180_MAX_STREAM_FPS
+#define K180_MAX_STREAM_FPS 60
+#endif
+
 namespace k180::constants {
 	
+inline constexpr std::string_view profile_name = K180_PROFILE_NAME;
+
 inline constexpr char META_PATH_0[] = "/home/fourd/projects/rtsp_server/cfg/meta1234_rotate_0";
 inline constexpr char META_PATH_180[] = "/home/fourd/projects/rtsp_server/cfg/meta1234_rotate_180";
 inline constexpr char FW_INFO_FILE[] = "/home/fourd/projects/rtsp_server/cfg/firmware_ver_info.json";
@@ -22,7 +36,10 @@ inline constexpr int stream_out_w_one_720 = 1280, stream_out_h_one_720 = 720;
 inline constexpr int stream_out_w_half_1080 = stream_out_w_1234_1080/2;
 inline constexpr int stream_out_w_half_720 = stream_out_w_1234_720/2;
 
-inline constexpr int trigger_interval_us = 16667;   //16667; // 60fps ~= 16.667ms
+inline constexpr int trigger_interval_us = K180_TRIGGER_INTERVAL_US;
+inline constexpr int max_stream_fps = K180_MAX_STREAM_FPS;
+static_assert(trigger_interval_us > 0, "K180_TRIGGER_INTERVAL_US must be positive");
+static_assert(max_stream_fps > 0, "K180_MAX_STREAM_FPS must be positive");
 /*
 shutter_interval = 17; 需要搭配 inline int exposure_tun_val = 8000;，輸出 fps 可達 58, 59, 若高於 8000, 則FPS不達58 59
 20 來不及 blender

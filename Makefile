@@ -1,5 +1,5 @@
 #===============================================================================
-# Description: C++ Project Makefile (dual logging: syslog & printf)
+# Description: C++ Project Makefile (fps x short/long profiles)
 #===============================================================================
 
 #===============================================================================
@@ -18,8 +18,13 @@ INCLUDES = -I./include \
 # PROJECT VARS
 #===============================================================================
 BUILD_DIR = ./build
-BUILD_SHORT = $(BUILD_DIR)/short
-BUILD_LONG  = $(BUILD_DIR)/long
+BUILD_COMMON = $(BUILD_DIR)/common
+BUILD_FPS60 = $(BUILD_DIR)/fps60
+BUILD_FPS30 = $(BUILD_DIR)/fps30
+BUILD_FPS60_SHORT = $(BUILD_DIR)/fps60_short
+BUILD_FPS60_LONG  = $(BUILD_DIR)/fps60_long
+BUILD_FPS30_SHORT = $(BUILD_DIR)/fps30_short
+BUILD_FPS30_LONG  = $(BUILD_DIR)/fps30_long
 YOLO_DIR = ./yolo_src_new
 YOLO_INC = ./yolo_inc_new
 
@@ -34,15 +39,11 @@ CUDA_DEFINES  = -DAPI_EXPORTS -Dmyplugins_EXPORTS
 CUDA_INCLUDES = -I./include -I./$(YOLO_INC) `pkg-config --cflags opencv4`
 CUDA_FLAGS    = -g -Xcompiler=-fPIC -std=c++11
 
-# 原本的 binary（完全保留）
-BIN_SERVICE = $(BUILD_DIR)/grand_yeah_service
-BIN_CONSOLE = $(BUILD_DIR)/grand_yeah_console
-
-# 新增 short / long binaries
-BIN_SERVICE_SHORT  = $(BUILD_DIR)/grand_yeah_service_short
-BIN_CONSOLE_SHORT  = $(BUILD_DIR)/grand_yeah_console_short
-BIN_SERVICE_LONG   = $(BUILD_DIR)/grand_yeah_service_long
-BIN_CONSOLE_LONG   = $(BUILD_DIR)/grand_yeah_console_long
+# Profile binaries
+BIN_FPS60_SHORT = $(BUILD_DIR)/grand_yeah_fps60_short
+BIN_FPS60_LONG  = $(BUILD_DIR)/grand_yeah_fps60_long
+BIN_FPS30_SHORT = $(BUILD_DIR)/grand_yeah_fps30_short
+BIN_FPS30_LONG  = $(BUILD_DIR)/grand_yeah_fps30_long
 
 MYPLUGIN  = $(BUILD_DIR)/libmyplugins.so
 INST_DIR  = ../../bin
@@ -52,6 +53,7 @@ INST_DIR  = ../../bin
 #===============================================================================
 SRCS_CPP  = \
 	$(SRC_DIR)/gy_two_cam.cpp \
+	$(SRC_DIR)/gy_logging.cpp \
 	$(SRC_DIR)/parser_user_json.cpp \
 	$(SRC_DIR)/my_seamfinder.cpp \
 	$(SRC_DIR)/user_cfg_validate.cpp \
@@ -85,7 +87,21 @@ SRCS_CPP  = \
 	$(BYTE_DIR)/lapjv.cpp \
 	$(BYTE_DIR)/utils.cpp
 
-LOG_CPP = $(SRC_DIR)/gy_logging.cpp
+# These sources include k180_constants.h, so they must be compiled once per fps
+# profile. They do not depend on HW_SHORT_VER.
+SRCS_CPP_FPS = \
+	$(SRC_DIR)/user_cfg_validate.cpp \
+	$(SRC_DIR)/k180_runtime.cpp \
+	$(SRC_DIR)/k180_bright_tuner.cpp \
+	$(SRC_DIR)/k180_stitch_api.cpp \
+	$(SRC_DIR)/k180_stream_builder.cpp \
+	$(SRC_DIR)/k180_ai_runtime.cpp
+
+# gy_two_cam.cpp depends on both the fps profile and HW_SHORT_VER.
+SRCS_CPP_VARIANT = \
+	$(SRC_DIR)/gy_two_cam.cpp
+
+SRCS_CPP_COMMON = $(filter-out $(SRCS_CPP_FPS) $(SRCS_CPP_VARIANT),$(SRCS_CPP))
 
 SRCS__CU  = \
 	src/noblender_kernel_stream.cu \
@@ -110,8 +126,14 @@ CFLAGS += -g -fno-omit-frame-pointer
 CFLAGS += -DNVMM_COPY_USE_EVENT_FENCE=1
 # CFLAGS += -g3 -O0 -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS
 # NVMM_COPY_USE_EVENT_FENCE 0/1
+CFLAGS_FPS60 = -DK180_PROFILE_NAME=\"fps60\" -DK180_TRIGGER_INTERVAL_US=16667 -DK180_MAX_STREAM_FPS=60
+CFLAGS_FPS30 = -DK180_PROFILE_NAME=\"fps30\" -DK180_TRIGGER_INTERVAL_US=33334 -DK180_MAX_STREAM_FPS=30
 CFLAGS_SHORT = -DHW_SHORT_VER
 CFLAGS_LONG  =
+CFLAGS_FPS60_SHORT = $(CFLAGS_FPS60) $(CFLAGS_SHORT)
+CFLAGS_FPS60_LONG  = $(CFLAGS_FPS60) $(CFLAGS_LONG)
+CFLAGS_FPS30_SHORT = $(CFLAGS_FPS30) $(CFLAGS_SHORT)
+CFLAGS_FPS30_LONG  = $(CFLAGS_FPS30) $(CFLAGS_LONG)
 # CFLAGS += -DGST_DBG_MSG=1
 #===============================================================================
 # LINK
@@ -137,37 +159,44 @@ LDLIBS    = -lpthread -lpcap -lfmt \
 #===============================================================================
 # OBJECTS
 #===============================================================================
-OBJS_CPP_COMMON       = $(SRCS_CPP:%.cpp=$(BUILD_DIR)/%.o)
 OBJS_CU_COMMON        = $(SRCS__CU:%.cu=$(BUILD_DIR)/%.cu.o)
 
-OBJS_CPP_SHORT        = $(SRCS_CPP:%.cpp=$(BUILD_SHORT)/%.o)
-OBJS_CU_SHORT         = $(SRCS__CU:%.cu=$(BUILD_SHORT)/%.cu.o)
-
-OBJS_CPP_LONG         = $(SRCS_CPP:%.cpp=$(BUILD_LONG)/%.o)
-OBJS_CU_LONG          = $(SRCS__CU:%.cu=$(BUILD_LONG)/%.cu.o)
-
-OBJS_LOG_SERVICE      = $(BUILD_DIR)/gy_logging_syslog.o
-OBJS_LOG_CONSOLE      = $(BUILD_DIR)/gy_logging_console.o
-
-OBJS_LOG_SERVICE_SHORT  = $(BUILD_SHORT)/gy_logging_syslog.o
-OBJS_LOG_CONSOLE_SHORT  = $(BUILD_SHORT)/gy_logging_console.o
-OBJS_LOG_SERVICE_LONG   = $(BUILD_LONG)/gy_logging_syslog.o
-OBJS_LOG_CONSOLE_LONG   = $(BUILD_LONG)/gy_logging_console.o
+OBJS_CPP_COMMON      = $(SRCS_CPP_COMMON:%.cpp=$(BUILD_COMMON)/%.o)
+OBJS_CPP_FPS60       = $(SRCS_CPP_FPS:%.cpp=$(BUILD_FPS60)/%.o)
+OBJS_CPP_FPS30       = $(SRCS_CPP_FPS:%.cpp=$(BUILD_FPS30)/%.o)
+OBJS_CPP_FPS60_SHORT = $(SRCS_CPP_VARIANT:%.cpp=$(BUILD_FPS60_SHORT)/%.o)
+OBJS_CPP_FPS60_LONG  = $(SRCS_CPP_VARIANT:%.cpp=$(BUILD_FPS60_LONG)/%.o)
+OBJS_CPP_FPS30_SHORT = $(SRCS_CPP_VARIANT:%.cpp=$(BUILD_FPS30_SHORT)/%.o)
+OBJS_CPP_FPS30_LONG  = $(SRCS_CPP_VARIANT:%.cpp=$(BUILD_FPS30_LONG)/%.o)
 
 #===============================================================================
 # PHONY
 #===============================================================================
-.PHONY: all clean distclean
+.PHONY: all all-profiles fps60 fps30 short long \
+        fps60-short fps60-long fps30-short fps30-long clean distclean
 
 #===============================================================================
 # ALL
 #===============================================================================
-all: \
-	$(MYPLUGIN) \
-	$(BIN_CONSOLE_SHORT) \
-	$(BIN_SERVICE_SHORT) \
-	$(BIN_SERVICE_LONG) \
-	$(BIN_CONSOLE_LONG)
+all: all-profiles
+
+all-profiles: fps60 fps30
+
+fps60: fps60-short fps60-long
+
+fps30: fps30-short fps30-long
+
+short: fps60-short fps30-short
+
+long: fps60-long fps30-long
+
+fps60-short: $(BIN_FPS60_SHORT)
+
+fps60-long: $(BIN_FPS60_LONG)
+
+fps30-short: $(BIN_FPS30_SHORT)
+
+fps30-long: $(BIN_FPS30_LONG)
 #===============================================================================
 # MYPLUGIN
 #===============================================================================
@@ -180,74 +209,52 @@ $(MYPLUGIN): $(OBJS_CU_COMMON)
 #===============================================================================
 # LINK BINARIES
 #===============================================================================
-$(BIN_SERVICE): $(OBJS_CPP_COMMON) $(OBJS_CU_COMMON) $(OBJS_LOG_SERVICE)
+$(BIN_FPS60_SHORT): $(OBJS_CPP_COMMON) $(OBJS_CPP_FPS60) $(OBJS_CPP_FPS60_SHORT) $(OBJS_CU_COMMON) | $(MYPLUGIN)
 	@$(LD) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_CONSOLE): $(OBJS_CPP_COMMON) $(OBJS_CU_COMMON) $(OBJS_LOG_CONSOLE)
+$(BIN_FPS60_LONG): $(OBJS_CPP_COMMON) $(OBJS_CPP_FPS60) $(OBJS_CPP_FPS60_LONG) $(OBJS_CU_COMMON) | $(MYPLUGIN)
 	@$(LD) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_SERVICE_SHORT): $(OBJS_CPP_SHORT) $(OBJS_CU_SHORT) $(OBJS_LOG_SERVICE_SHORT)
+$(BIN_FPS30_SHORT): $(OBJS_CPP_COMMON) $(OBJS_CPP_FPS30) $(OBJS_CPP_FPS30_SHORT) $(OBJS_CU_COMMON) | $(MYPLUGIN)
 	@$(LD) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_CONSOLE_SHORT): $(OBJS_CPP_SHORT) $(OBJS_CU_SHORT) $(OBJS_LOG_CONSOLE_SHORT)
-	@$(LD) -o $@ $^ $(LDFLAGS) $(LDLIBS)
-
-$(BIN_SERVICE_LONG): $(OBJS_CPP_LONG) $(OBJS_CU_LONG) $(OBJS_LOG_SERVICE_LONG)
-	@$(LD) -o $@ $^ $(LDFLAGS) $(LDLIBS)
-
-$(BIN_CONSOLE_LONG): $(OBJS_CPP_LONG) $(OBJS_CU_LONG) $(OBJS_LOG_CONSOLE_LONG)
+$(BIN_FPS30_LONG): $(OBJS_CPP_COMMON) $(OBJS_CPP_FPS30) $(OBJS_CPP_FPS30_LONG) $(OBJS_CU_COMMON) | $(MYPLUGIN)
 	@$(LD) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 #===============================================================================
 # COMPILE RULES
 #===============================================================================
-$(BUILD_DIR)/%.o: %.cpp
+$(BUILD_COMMON)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) -MMD -c -o $@ $<
 
-$(BUILD_SHORT)/%.o: %.cpp
+$(BUILD_FPS60)/%.o: %.cpp
 	@mkdir -p $(dir $@)
-	@$(CXX) $(CFLAGS) $(CFLAGS_SHORT) -MMD -c -o $@ $<
+	@$(CXX) $(CFLAGS) $(CFLAGS_FPS60) -MMD -c -o $@ $<
 
-$(BUILD_LONG)/%.o: %.cpp
+$(BUILD_FPS30)/%.o: %.cpp
 	@mkdir -p $(dir $@)
-	@$(CXX) $(CFLAGS) $(CFLAGS_LONG) -MMD -c -o $@ $<
+	@$(CXX) $(CFLAGS) $(CFLAGS_FPS30) -MMD -c -o $@ $<
+
+$(BUILD_FPS60_SHORT)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	@$(CXX) $(CFLAGS) $(CFLAGS_FPS60_SHORT) -MMD -c -o $@ $<
+
+$(BUILD_FPS60_LONG)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	@$(CXX) $(CFLAGS) $(CFLAGS_FPS60_LONG) -MMD -c -o $@ $<
+
+$(BUILD_FPS30_SHORT)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	@$(CXX) $(CFLAGS) $(CFLAGS_FPS30_SHORT) -MMD -c -o $@ $<
+
+$(BUILD_FPS30_LONG)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	@$(CXX) $(CFLAGS) $(CFLAGS_FPS30_LONG) -MMD -c -o $@ $<
 
 $(BUILD_DIR)/%.cu.o: %.cu
 	@mkdir -p $(dir $@)
 	@$(NXX) $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -MMD -c -o $@ $<
-
-$(BUILD_SHORT)/%.cu.o: %.cu
-	@mkdir -p $(dir $@)
-	@$(NXX) $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -MMD -c -o $@ $<
-
-$(BUILD_LONG)/%.cu.o: %.cu
-	@mkdir -p $(dir $@)
-	@$(NXX) $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -MMD -c -o $@ $<
-
-$(BUILD_DIR)/gy_logging_syslog.o: $(LOG_CPP)
-	@mkdir -p $(dir $@)
-	@$(CXX) $(CFLAGS) -DUSE_SYSLOG -MMD -c -o $@ $<
-
-$(BUILD_DIR)/gy_logging_console.o: $(LOG_CPP)
-	@mkdir -p $(dir $@)
-	@$(CXX) $(CFLAGS) -MMD -c -o $@ $<
-
-$(BUILD_SHORT)/gy_logging_syslog.o: $(LOG_CPP)
-	@mkdir -p $(dir $@)
-	@$(CXX) $(CFLAGS) $(CFLAGS_SHORT) -DUSE_SYSLOG -MMD -c -o $@ $<
-
-$(BUILD_SHORT)/gy_logging_console.o: $(LOG_CPP)
-	@mkdir -p $(dir $@)
-	@$(CXX) $(CFLAGS) $(CFLAGS_SHORT) -MMD -c -o $@ $<
-
-$(BUILD_LONG)/gy_logging_syslog.o: $(LOG_CPP)
-	@mkdir -p $(dir $@)
-	@$(CXX) $(CFLAGS) $(CFLAGS_LONG) -DUSE_SYSLOG -MMD -c -o $@ $<
-
-$(BUILD_LONG)/gy_logging_console.o: $(LOG_CPP)
-	@mkdir -p $(dir $@)
-	@$(CXX) $(CFLAGS) $(CFLAGS_LONG) -MMD -c -o $@ $<
 
 #===============================================================================
 # CLEAN
@@ -260,6 +267,7 @@ distclean: clean
 #===============================================================================
 # AUTO DEPENDENCIES (.d)
 #===============================================================================
--include $(OBJS_CPP_COMMON:.o=.d) $(OBJS_CPP_SHORT:.o=.d) $(OBJS_CPP_LONG:.o=.d) \
-         $(OBJS_CU_COMMON:.o=.d)  $(OBJS_CU_SHORT:.o=.d)  $(OBJS_CU_LONG:.o=.d)
-
+-include $(OBJS_CPP_COMMON:.o=.d) $(OBJS_CPP_FPS60:.o=.d) $(OBJS_CPP_FPS30:.o=.d) \
+         $(OBJS_CPP_FPS60_SHORT:.o=.d) $(OBJS_CPP_FPS60_LONG:.o=.d) \
+         $(OBJS_CPP_FPS30_SHORT:.o=.d) $(OBJS_CPP_FPS30_LONG:.o=.d) \
+         $(OBJS_CU_COMMON:.o=.d)
