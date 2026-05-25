@@ -39,26 +39,30 @@ if [[ -z "$latest_tag" ]]; then
 fi
 
 if [[ "$latest_ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-    major="${BASH_REMATCH[1]}"
-    minor="${BASH_REMATCH[2]}"
-    patch="${BASH_REMATCH[3]}"
+    latest_major="${BASH_REMATCH[1]}"
+    latest_minor="${BASH_REMATCH[2]}"
+    latest_patch="${BASH_REMATCH[3]}"
 else
     echo "ERROR: latest release tag '$latest_tag' is not vX.Y.Z." >&2
     exit 1
 fi
 
+next_major="$latest_major"
+next_minor="$latest_minor"
+next_patch="$latest_patch"
+
 case "$kind" in
     patch)
-        patch=$((patch + 1))
+        next_patch=$((next_patch + 1))
         ;;
     minor)
-        minor=$((minor + 1))
-        patch=0
+        next_minor=$((next_minor + 1))
+        next_patch=0
         ;;
     major)
-        major=$((major + 1))
-        minor=0
-        patch=0
+        next_major=$((next_major + 1))
+        next_minor=0
+        next_patch=0
         ;;
     v*)
         kind="${kind#v}"
@@ -78,7 +82,7 @@ case "$kind" in
 esac
 
 if [[ -z "${next_ver:-}" ]]; then
-    next_ver="${major}.${minor}.${patch}"
+    next_ver="${next_major}.${next_minor}.${next_patch}"
 fi
 
 if [[ "$next_ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
@@ -91,9 +95,9 @@ else
 fi
 
 if [[ -n "$latest_tag" ]]; then
-    if (( next_major < major )) ||
-       (( next_major == major && next_minor < minor )) ||
-       (( next_major == major && next_minor == minor && next_patch <= patch )); then
+    if (( next_major < latest_major )) ||
+       (( next_major == latest_major && next_minor < latest_minor )) ||
+       (( next_major == latest_major && next_minor == latest_minor && next_patch <= latest_patch )); then
         echo "ERROR: next version ${next_ver} must be greater than latest ${latest_ver}." >&2
         exit 1
     fi
