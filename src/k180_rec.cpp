@@ -287,19 +287,21 @@ void rec_center(){
 
 	while (keep_running.load(std::memory_order_relaxed)) {
 
-		int64_t dir_size = get_directory_size("/data"); 
+		int64_t dir_size = get_directory_size(RECORD_DIR);
 		if (dir_size != -1) { 
 			log_info_fmt("Total size of directory : %ld bytes\n" ,dir_size); 
 		} else { 
 			log_error_errno_fmt("Error calculating size for directory"); 
 		} 
 		while ( dir_size > cfggg.rec_dick_size ){
-			ret = system("ls /data/* -t | tail -n 4 | xargs -d '\n' rm");
+			char cleanup_cmd[256];
+			snprintf(cleanup_cmd, sizeof(cleanup_cmd), "ls %s/* -t | tail -n 4 | xargs -d '\\n' rm", RECORD_DIR);
+			ret = system(cleanup_cmd);
 			if( ret == -1 ){
 				log_info_fmt("ERROR : del file cmd");
 				// cleanup_and_exit(0);
 			}
-			dir_size = get_directory_size("/data"); 
+			dir_size = get_directory_size(RECORD_DIR);
 			if (dir_size != -1) { 
 				log_info_fmt("Total size of directory : %ld bytes\n" ,dir_size); 
 			} else { 
@@ -350,12 +352,12 @@ void rec_center(){
  // maxperf-enable=1 vbv-size=32000
 		time(&now);
 		t = localtime(&now);
-		// sprintf(write_cmd_1234, "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc ! h265parse ! mpegtsmux ! filesink location=/data/S1_ch1234_%d%02d%02d_%02d%02d.mp4", t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
-		sprintf(write_cmd_1234, "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=/data/S1_ch1234_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps*2, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
-		sprintf(write_cmd_0, "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=/data/S1_ch1_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
-		sprintf(write_cmd_1, "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=/data/S1_ch2_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
-		sprintf(write_cmd_2, "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=/data/S1_ch3_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
-		sprintf(write_cmd_3, "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=/data/S1_ch4_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
+		// sprintf(write_cmd_1234, "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc ! h265parse ! mpegtsmux ! filesink location=%s/S1_ch1234_%d%02d%02d_%02d%02d.mp4", RECORD_DIR, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
+		snprintf(write_cmd_1234, sizeof(write_cmd_1234), "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=%s/S1_ch1234_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps*2, RECORD_DIR, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
+		snprintf(write_cmd_0, sizeof(write_cmd_0), "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=%s/S1_ch1_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps, RECORD_DIR, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
+		snprintf(write_cmd_1, sizeof(write_cmd_1), "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=%s/S1_ch2_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps, RECORD_DIR, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
+		snprintf(write_cmd_2, sizeof(write_cmd_2), "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=%s/S1_ch3_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps, RECORD_DIR, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
+		snprintf(write_cmd_3, sizeof(write_cmd_3), "appsrc ! videoconvert ! video/x-raw,format=BGRx ! nvvidconv ! nvv4l2h265enc bitrate=%d ! h265parse ! mpegtsmux ! filesink location=%s/S1_ch4_%d%02d%02d_%02d%02d.mp4", cfggg.s1.datarate_bps, RECORD_DIR, t->tm_year+1900, t->tm_mon+1, t->tm_mday, t->tm_hour, t->tm_min);
 		
 		switch ( cfggg.recorded ){
 			case 1:

@@ -77,6 +77,7 @@
 #include "gy_logging.h"
 #include "user_def_json.h"
 #include "k180_constants.h"
+#include "k180_build_info.h"
 #include "k180_runtime.h"
 #include "k180_tracking.h"
 #include "k180_perf_stats.h"
@@ -118,7 +119,9 @@
 
 #undef HAVE_OPENCV_CUDALEGACY
 #define ENABLE_LOG 1
-#define FW_VER "1.60.11"	// 1.22 fix program exit procedure, 1.23 減少 調光 log, 
+#define K180_STRINGIFY_IMPL(x) #x
+#define K180_STRINGIFY(x) K180_STRINGIFY_IMPL(x)
+#define FPS_VER K180_STRINGIFY(K180_MAX_STREAM_FPS)
 // 1.60.4  60fps with inference
 /*
 1.60.5 加入了 infer thread
@@ -2025,11 +2028,7 @@ cec.seam_finder = create_seam_finder( k180::runtime::rt().sdp );
 
 	int tracker = 2	;	//-1;
 	string iface_in = "eth0", iface_out = "eth1";
-	string engine = "/home/fourd/projects/rtsp_server/yolov8n_fp16.engine";	// ok
-	// string engine = "/home/fourd/projects/rtsp_server/yolov8s_fp16.engine";	// ok
-	// string engine = "/home/fourd/projects/rtsp_server/yolov8s_fp32.engine";	// 怪怪
-	// string engine = "/home/fourd/projects/rtsp_server/yolov8.engine";	// ok ctrl+c 時，停不掉
-	// string engine = "/home/fourd/projects/rtsp_server/yolov8s.engine";	// 怪怪
+	string engine = YOLO_ENGINE_FILE;	// ok
 	Mode mode = NO_SAVE;
 
 
@@ -2306,9 +2305,21 @@ static int renew_fw_info( ){
         return 1;
     }
 
-    // 建立新的 fwver 值（使用字串）
-    struct json_object *new_ver = json_object_new_string(FW_VER);
+    // 建立新的版本資訊。fwver 是韌體版本；fpsver/max_stream_fps 是目前 binary 的 FPS profile。
+    struct json_object *new_ver = json_object_new_string(K180_FW_VER);
     json_object_object_add(sysinfo, "fwver", new_ver);
+    struct json_object *new_fpsver = json_object_new_string(FPS_VER);
+    json_object_object_add(sysinfo, "fpsver", new_fpsver);
+    struct json_object *new_max_stream_fps = json_object_new_int(K180_MAX_STREAM_FPS);
+    json_object_object_add(sysinfo, "max_stream_fps", new_max_stream_fps);
+    struct json_object *new_build_mode = json_object_new_string(K180_BUILD_MODE);
+    json_object_object_add(sysinfo, "build_mode", new_build_mode);
+    struct json_object *new_git_commit = json_object_new_string(K180_GIT_COMMIT);
+    json_object_object_add(sysinfo, "git_commit", new_git_commit);
+    struct json_object *new_git_describe = json_object_new_string(K180_GIT_DESCRIBE);
+    json_object_object_add(sysinfo, "git_describe", new_git_describe);
+    struct json_object *new_git_dirty = json_object_new_int(K180_GIT_DIRTY);
+    json_object_object_add(sysinfo, "git_dirty", new_git_dirty);
     const char *new_json = json_object_to_json_string_ext(root, JSON_C_TO_STRING_PRETTY);
     rewind(fp);
 	if (ftruncate(fd_l, 0) < 0) {
@@ -2500,9 +2511,10 @@ int main(int argc, char *argv[])
     GstRTSPSessionPool *session;
 
     init_logging("grand_yeah");
-    log_info_fmt("Service started version %s", FW_VER);
+    log_info_fmt("Service started version %s fps%s %s %s dirty=%d",
+                 K180_FW_VER, FPS_VER, K180_BUILD_MODE, K180_GIT_COMMIT, K180_GIT_DIRTY);
     renew_fw_info();
-    k180::record_cleanup::cleanup_once("/data");
+    k180::record_cleanup::cleanup_once(RECORD_DIR);
 
     std::string err;
     auto st = user_cfg_load_from_file(cfggg, RF_REG_FILE, &err);
@@ -2533,7 +2545,7 @@ k180::ai::init_ai_runtime_from_cfg(cfggg.objectdet);
         std::cerr << "cc_entry_point_all failed: " << ret << "\n";
         return ret;
     }
-    k180::record_cleanup::start_runtime_cleanup("/data");
+    k180::record_cleanup::start_runtime_cleanup(RECORD_DIR);
 	// #endif
     // ✅ trigger thread now needs cec
     trig_thread = std::thread(trigger_thread, std::ref(cec));

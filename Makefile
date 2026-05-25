@@ -25,6 +25,8 @@ BUILD_FPS60_SHORT = $(BUILD_DIR)/fps60_short
 BUILD_FPS60_LONG  = $(BUILD_DIR)/fps60_long
 BUILD_FPS30_SHORT = $(BUILD_DIR)/fps30_short
 BUILD_FPS30_LONG  = $(BUILD_DIR)/fps30_long
+BUILD_GEN_DIR = $(BUILD_DIR)/generated
+BUILD_INFO_H = $(BUILD_GEN_DIR)/k180_build_info.h
 YOLO_DIR = ./yolo_src_new
 YOLO_INC = ./yolo_inc_new
 
@@ -113,11 +115,15 @@ SRCS__CU  = \
 #===============================================================================
 # FLAGS
 #===============================================================================
-INCS = -I./ -I./$(YOLO_INC) -I./yolo_plugin \
+INCS = -I./ -I$(BUILD_GEN_DIR) -I./$(YOLO_INC) -I./yolo_plugin \
 	-I/usr/local/cuda/targets/aarch64-linux/include \
 	-I/usr/src/jetson_multimedia_api/include \
 	`pkg-config --cflags glib-2.0 gstreamer-1.0 opencv4 libsoup-2.4 json-glib-1.0` \
 	-I/usr/include/glib-2.0
+
+BUILD_MODE ?= dev
+PROFILE ?= fps60-short
+FW_VER ?= $(if $(filter release,$(BUILD_MODE)),$(shell git describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null | sed 's/^v//'),dev)
 
 OPT       = -O2
 CFLAGS    = -Wall $(INCS) $(OPT) $(INCLUDES)
@@ -173,7 +179,8 @@ OBJS_CPP_FPS30_LONG  = $(SRCS_CPP_VARIANT:%.cpp=$(BUILD_FPS30_LONG)/%.o)
 # PHONY
 #===============================================================================
 .PHONY: all all-profiles fps60 fps30 short long \
-        fps60-short fps60-long fps30-short fps30-long clean distclean
+        fps60-short fps60-long fps30-short fps30-long \
+        build-info print-build-info check-release release clean distclean FORCE
 
 #===============================================================================
 # ALL
@@ -197,9 +204,63 @@ fps60-long: $(BIN_FPS60_LONG)
 fps30-short: $(BIN_FPS30_SHORT)
 
 fps30-long: $(BIN_FPS30_LONG)
+
+build-info: $(BUILD_INFO_H)
+
+print-build-info: $(BUILD_INFO_H)
+	@sed -n '1,200p' $(BUILD_INFO_H)
+
+check-release:
+	@if [ "$(BUILD_MODE)" != "release" ]; then \
+		echo "ERROR: check-release must run with BUILD_MODE=release"; \
+		exit 1; \
+	fi
+	@if [ -z "$(FW_VER)" ] || [ "$(FW_VER)" = "dev" ]; then \
+		echo "ERROR: no release version found. Run ./prepare_release.sh patch|minor|major first, or pass FW_VER=1.2.3."; \
+		exit 1; \
+	fi
+	@case "$(PROFILE)" in \
+		fps60-short|fps60-long|fps30-short|fps30-long) ;; \
+		*) echo "ERROR: invalid PROFILE='$(PROFILE)'"; exit 1 ;; \
+	esac
+	@if [ -n "$$(git status --porcelain 2>/dev/null)" ]; then \
+		echo "ERROR: release build requires a clean git working tree."; \
+		git status --short; \
+		exit 1; \
+	fi
+	@tag="v$(FW_VER)"; \
+	head="$$(git rev-parse HEAD 2>/dev/null)"; \
+	tag_commit="$$(git rev-parse "$$tag^{}" 2>/dev/null || true)"; \
+	if [ -z "$$tag_commit" ] || [ "$$tag_commit" != "$$head" ]; then \
+		echo "ERROR: HEAD is not tagged as $$tag. Run ./prepare_release.sh $(FW_VER) or checkout the tagged commit."; \
+		exit 1; \
+	fi
+
+release: BUILD_MODE := release
+release: check-release
+	@$(MAKE) BUILD_MODE=release FW_VER=$(FW_VER) $(PROFILE)
 #===============================================================================
 # MYPLUGIN
 #===============================================================================
+$(BUILD_INFO_H): FORCE
+	@mkdir -p $(dir $@)
+	@tmp="$@.tmp"; \
+	fw_ver="$(FW_VER)"; \
+	build_mode="$(BUILD_MODE)"; \
+	git_commit="$$(git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)"; \
+	git_describe="$$(git describe --tags --always --dirty 2>/dev/null || printf unknown)"; \
+	if [ -z "$$(git status --porcelain 2>/dev/null)" ]; then git_dirty=0; else git_dirty=1; fi; \
+	{ \
+		printf '%s\n' '#pragma once'; \
+		printf '%s\n' ''; \
+		printf '#define K180_FW_VER "%s"\n' "$$fw_ver"; \
+		printf '#define K180_BUILD_MODE "%s"\n' "$$build_mode"; \
+		printf '#define K180_GIT_COMMIT "%s"\n' "$$git_commit"; \
+		printf '#define K180_GIT_DESCRIBE "%s"\n' "$$git_describe"; \
+		printf '#define K180_GIT_DIRTY %s\n' "$$git_dirty"; \
+	} > "$$tmp"; \
+	if ! cmp -s "$$tmp" "$@"; then mv "$$tmp" "$@"; else rm -f "$$tmp"; fi
+
 $(MYPLUGIN): $(OBJS_CU_COMMON)
 	@$(CXX) -fPIC -shared -Wl,-soname,libmyplugins.so -o $@ $^ \
 	-lnvinfer -lcudart -L"/usr/local/cuda/targets/aarch64-linux/lib/stubs" \
@@ -224,31 +285,31 @@ $(BIN_FPS30_LONG): $(OBJS_CPP_COMMON) $(OBJS_CPP_FPS30) $(OBJS_CPP_FPS30_LONG) $
 #===============================================================================
 # COMPILE RULES
 #===============================================================================
-$(BUILD_COMMON)/%.o: %.cpp
+$(BUILD_COMMON)/%.o: %.cpp $(BUILD_INFO_H)
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) -MMD -c -o $@ $<
 
-$(BUILD_FPS60)/%.o: %.cpp
+$(BUILD_FPS60)/%.o: %.cpp $(BUILD_INFO_H)
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) $(CFLAGS_FPS60) -MMD -c -o $@ $<
 
-$(BUILD_FPS30)/%.o: %.cpp
+$(BUILD_FPS30)/%.o: %.cpp $(BUILD_INFO_H)
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) $(CFLAGS_FPS30) -MMD -c -o $@ $<
 
-$(BUILD_FPS60_SHORT)/%.o: %.cpp
+$(BUILD_FPS60_SHORT)/%.o: %.cpp $(BUILD_INFO_H)
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) $(CFLAGS_FPS60_SHORT) -MMD -c -o $@ $<
 
-$(BUILD_FPS60_LONG)/%.o: %.cpp
+$(BUILD_FPS60_LONG)/%.o: %.cpp $(BUILD_INFO_H)
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) $(CFLAGS_FPS60_LONG) -MMD -c -o $@ $<
 
-$(BUILD_FPS30_SHORT)/%.o: %.cpp
+$(BUILD_FPS30_SHORT)/%.o: %.cpp $(BUILD_INFO_H)
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) $(CFLAGS_FPS30_SHORT) -MMD -c -o $@ $<
 
-$(BUILD_FPS30_LONG)/%.o: %.cpp
+$(BUILD_FPS30_LONG)/%.o: %.cpp $(BUILD_INFO_H)
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) $(CFLAGS_FPS30_LONG) -MMD -c -o $@ $<
 

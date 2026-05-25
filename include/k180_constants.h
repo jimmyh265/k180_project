@@ -14,14 +14,38 @@
 #define K180_MAX_STREAM_FPS 60
 #endif
 
+#ifndef K180_CONFIG_DIR
+#define K180_CONFIG_DIR "/etc/k180"
+#endif
+
+#ifndef K180_STATE_DIR
+#define K180_STATE_DIR "/var/lib/k180"
+#endif
+
+#ifndef K180_DATA_DIR
+#define K180_DATA_DIR "/usr/local/share/k180"
+#endif
+
+#ifndef K180_RECORD_DIR
+#define K180_RECORD_DIR "/data"
+#endif
+
 namespace k180::constants {
 	
 inline constexpr std::string_view profile_name = K180_PROFILE_NAME;
 
-inline constexpr char META_PATH_0[] = "/home/fourd/projects/rtsp_server/cfg/meta1234_rotate_0";
-inline constexpr char META_PATH_180[] = "/home/fourd/projects/rtsp_server/cfg/meta1234_rotate_180";
-inline constexpr char FW_INFO_FILE[] = "/home/fourd/projects/rtsp_server/cfg/firmware_ver_info.json";
-inline constexpr char RF_REG_FILE[] = "/home/fourd/projects/rtsp_server/cfg/user_def_setting.json";
+inline constexpr char CONFIG_DIR[] = K180_CONFIG_DIR;
+inline constexpr char STATE_DIR[] = K180_STATE_DIR;
+inline constexpr char DATA_DIR[] = K180_DATA_DIR;
+inline constexpr char RECORD_DIR[] = K180_RECORD_DIR;
+
+inline constexpr char META_PATH_0[] = K180_CONFIG_DIR "/meta1234_rotate_0";
+inline constexpr char META_PATH_180[] = K180_CONFIG_DIR "/meta1234_rotate_180";
+inline constexpr char FW_INFO_FILE[] = K180_STATE_DIR "/firmware_ver_info.json";
+inline constexpr char API_INFO_FILE[] = K180_STATE_DIR "/api_ver_info.json";
+inline constexpr char RF_REG_FILE[] = K180_CONFIG_DIR "/user_def_setting.json";
+inline constexpr char RESCUE_SYS_IP_FILE[] = K180_CONFIG_DIR "/rescue_sys_ip.json";
+inline constexpr char YOLO_ENGINE_FILE[] = K180_DATA_DIR "/yolov8n_fp16.engine";
 
 inline constexpr int WORKAROUNF_FPS = 30;
 inline constexpr int CAM_NUMBER = 4;

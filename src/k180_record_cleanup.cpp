@@ -208,7 +208,7 @@ bool cleanup_once(const char* dir,
                   int min_file_age_sec)
 {
     const std::string target_dir =
-        (dir && dir[0] != '\0') ? std::string(dir) : std::string("/data");
+        (dir && dir[0] != '\0') ? std::string(dir) : std::string(k180::constants::RECORD_DIR);
 
     if (high_water_percent <= 0.0 || high_water_percent > 100.0) {
         high_water_percent = kDefaultHighWaterPercent;
@@ -275,7 +275,7 @@ bool cleanup_once(const char* dir,
 void start_runtime_cleanup(const char* dir)
 {
     const std::string target_dir =
-        (dir && dir[0] != '\0') ? std::string(dir) : std::string("/data");
+        (dir && dir[0] != '\0') ? std::string(dir) : std::string(k180::constants::RECORD_DIR);
 
     std::lock_guard<std::mutex> lock(g_thread_mtx);
     if (g_started) return;

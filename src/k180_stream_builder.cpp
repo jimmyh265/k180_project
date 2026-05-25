@@ -267,7 +267,7 @@ a.osd_shared = osd_shared;
             a.enable_record = record_enabled_for(g, v, cfggg.recorded);
 			mgr.record_enabled[sid].store(a.enable_record, std::memory_order_relaxed);
             a.record_mp4    = true;
-			a.record_path = a.enable_record ? "/data" : "";
+			a.record_path = a.enable_record ? RECORD_DIR : "";
 			a.record_prefix = a.enable_record ? make_record_prefix(g, v) : "";
 			dump_h265_hub_create_args(stderr, a, "  ");
             if (!mgr.hubs[sid].create(a) || !mgr.hubs[sid].start()) {
