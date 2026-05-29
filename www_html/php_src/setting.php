@@ -111,7 +111,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $remote_fps = intval($_POST['fps_2']);
     $remote_datarate = floatval($_POST['datarate_2']);
     $local_recorded = intval($_POST['local_recorded']);
-    $local_obj_det = intval($_POST['local_obj_det']);
     $local_rotate180 = intval($_POST['local_rotate180']);
     $sys_ip = $_POST['sys_ip'];
     $sys_netmask = intval($_POST['sys_netmask']);
@@ -133,7 +132,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $remote_fps != $old_jsonData['stream_2']['fps'] ||
         $remote_datarate != $old_jsonData['stream_2']['datarate'] ||
         $local_recorded != $old_jsonData['system_cfg']['recorded'] ||
-        $local_obj_det != $old_jsonData['system_cfg']['objectdet'] ||
         $local_rotate180 != $old_jsonData['system_cfg']['rotate180']
     ) {
         $jsonData['stream_1']['resolution'] = $local_resolution;
@@ -143,7 +141,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $jsonData['stream_2']['fps'] = $remote_fps;
         $jsonData['stream_2']['datarate'] = $remote_datarate;
         $jsonData['system_cfg']['recorded'] = $local_recorded;
-        $jsonData['system_cfg']['objectdet'] = $local_obj_det;
         $jsonData['system_cfg']['rotate180'] = $local_rotate180;
         $stream_cfg_change = 1;
     }
@@ -397,17 +394,6 @@ if ($jsonData === null) {
         $options = [0 => "OFF", 1 => "1 & 2 & 3 & 4", 2 => "1 / 2 / 3 / 4"];
         foreach ($options as $value => $label) {
             echo '<option value="' . $value . '" ' . ($jsonData['system_cfg']['recorded'] == $value ? 'selected' : '') . '>' . htmlspecialchars($label) . '</option>';
-        }
-        ?>
-    </select>
-    </label>
-
-    <label><span><?= $lang['object_detection'] ?>:</span>
-    <select name="local_obj_det">
-        <?php
-        $options = [0 => "OFF", 1 => "1 & 2 & 3 & 4", 2 => "1 & 2", 3 => "3 & 4"];
-        foreach ($options as $value => $label) {
-            echo '<option value="' . $value . '" ' . ($jsonData['system_cfg']['objectdet'] == $value ? 'selected' : '') . '>' . htmlspecialchars($label) . '</option>';
         }
         ?>
     </select>
