@@ -59,10 +59,10 @@ k180_release/
 
 ## 在 Build Machine 產生 Release Package
 
-在 `/home/jimnt/projects` 執行：
+在 `/home/jimnt/k180_project` 執行：
 
 ```bash
-cd /home/jimnt/projects
+cd /home/jimnt/k180_project
 
 make -C rtsp_server fps60-short
 make -C restful_api
@@ -92,7 +92,8 @@ install -m 0750 system_helpers/build/modify_sysip_netplan "${RELEASE_ROOT}/usr/l
 install -m 0750 system_helpers/build/reboot_system "${RELEASE_ROOT}/usr/local/libexec/k180/reboot_system"
 install -m 0750 system_helpers/build/restart_program_camera "${RELEASE_ROOT}/usr/local/libexec/k180/restart_program_camera"
 
-install -m 0644 rtsp_server/yolov8n_fp16.engine "${RELEASE_ROOT}/usr/local/share/k180/yolov8n_fp16.engine"
+# yolov8n_fp16.engine 是外部 release asset，不放在 git repo 裡。
+install -m 0644 /home/jimnt/k180_release_assets/yolov8n_fp16.engine "${RELEASE_ROOT}/usr/local/share/k180/yolov8n_fp16.engine"
 
 install -m 0664 rtsp_server/cfg/user_def_setting.json "${RELEASE_ROOT}/etc/k180/user_def_setting.json"
 install -m 0640 rtsp_server/cfg/rescue_sys_ip.json "${RELEASE_ROOT}/etc/k180/rescue_sys_ip.json"
