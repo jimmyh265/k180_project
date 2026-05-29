@@ -1,0 +1,33 @@
+# External dependency checked out separately
+ByteTrack/
+
+# Build outputs
+build/
+*/build/
+*.o
+*.d
+*.so
+*.a
+*.out
+
+# Firmware/package artifacts
+gen_fw/packages/*.hhc
+www_html/tmp_fw/*
+www_html/tmp_rec_zip/*
+
+# Runtime/log/temp data
+log/
+logs/
+tmp/
+*.log
+*.zip
+*.tar
+*.tar.gz
+*.engine
+
+# Local/editor files
+.codex
+.codex/
+.vscode/
+*.swp
+*~
