@@ -1,0 +1,9 @@
+network:
+  version: 2
+  renderer: NetworkManager
+  ethernets:
+    eth0:
+      dhcp4: true
+    eth1:
+      addresses:
+      - 192.168.145.91/24
