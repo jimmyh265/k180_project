@@ -1,0 +1,11 @@
+{
+  "git.ignoredRepositories": [
+    "/home/jimnt/projects/rtsp_server/ByteTrack"
+  ],
+  "files.watcherExclude": {
+    "**/ByteTrack/**": true
+  },
+  "search.exclude": {
+    "**/ByteTrack": true
+  }
+}

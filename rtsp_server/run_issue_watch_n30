@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN="${1:-./build/grand_yeah_console_short_issue}"
+if [ $# -gt 0 ]; then
+  shift
+fi
+BIN_ARGS=("$@")
+
+RUNS="${RUNS:-1}"
+MAX_SEC="${MAX_SEC:-300}"
+WARMUP_SEC="${WARMUP_SEC:-10}"
+CHECK_SEC="${CHECK_SEC:-10}"
+KILL_AFTER_SEC="${KILL_AFTER_SEC:-10}"
+PATTERN="${PATTERN:-n=30}"
+STREAM_READY_PATTERN="${STREAM_READY_PATTERN:-INFO: stream ready}"
+FPS_DROP_MARGIN="${FPS_DROP_MARGIN:-10}"
+FPS_TAG_REGEX="${FPS_TAG_REGEX:-\\[FPS\\]\\[nvvidconv_in_[0-9]+\\]}"
+
+get_arg_value() {
+  local name="$1"
+  local arg
+  local next_is_value=0
+
+  for arg in "${BIN_ARGS[@]}"; do
+    if [ "$next_is_value" -eq 1 ]; then
+      printf '%s\n' "$arg"
+      return 0
+    fi
+
+    case "$arg" in
+      "$name="*)
+        printf '%s\n' "${arg#*=}"
+        return 0
+        ;;
+      "$name")
+        next_is_value=1
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+TARGET_FPS="${TARGET_FPS:-}"
+TARGET_FPS_SOURCE="TARGET_FPS"
+trigger_fps_arg="$(get_arg_value "--trigger-fps" || true)"
+trigger_interval_arg="$(get_arg_value "--trigger-interval-us" || true)"
+
+if [ -z "$TARGET_FPS" ] && [ -n "$trigger_fps_arg" ] && awk -v v="$trigger_fps_arg" 'BEGIN { exit !((v + 0) > 0) }'; then
+  TARGET_FPS="$trigger_fps_arg"
+  TARGET_FPS_SOURCE="--trigger-fps"
+fi
+
+if [ -z "$TARGET_FPS" ] && [ -n "$trigger_interval_arg" ] && awk -v v="$trigger_interval_arg" 'BEGIN { exit !((v + 0) > 0) }'; then
+  TARGET_FPS="$(awk -v us="$trigger_interval_arg" 'BEGIN { printf "%.6f", 1000000.0 / us }')"
+  TARGET_FPS_SOURCE="--trigger-interval-us"
+fi
+
+FPS_WATCH_ENABLED=0
+FPS_THRESHOLD=""
+if [ -n "$TARGET_FPS" ]; then
+  FPS_WATCH_ENABLED=1
+  FPS_THRESHOLD="$(awk -v target="$TARGET_FPS" -v margin="$FPS_DROP_MARGIN" 'BEGIN { printf "%.6f", target - margin }')"
+fi
+
+find_low_fps_line() {
+  local log_file="$1"
+  local start_line="$2"
+
+  tail -n +"$start_line" "$log_file" 2>/dev/null | awk \
+    -v threshold="$FPS_THRESHOLD" \
+    -v tag_re="$FPS_TAG_REGEX" '
+      /\[SIG\]/ {
+        exit found ? 0 : 1
+      }
+      $0 ~ tag_re {
+        fps_text = $0
+        sub(/^.*fps=/, "", fps_text)
+        sub(/[^0-9.].*$/, "", fps_text)
+        if (fps_text != "" && (fps_text + 0) <= threshold) {
+          print $0
+          found = 1
+          exit
+        }
+      }
+      END { exit found ? 0 : 1 }
+    '
+}
+
+cd "$SCRIPT_DIR" || exit 1
+mkdir -p log
+
+if [ "$FPS_WATCH_ENABLED" -eq 1 ]; then
+  echo "watch mode: fps target=$TARGET_FPS source=$TARGET_FPS_SOURCE margin=$FPS_DROP_MARGIN threshold=$FPS_THRESHOLD tag_regex=$FPS_TAG_REGEX"
+else
+  echo "watch mode: pattern pattern=$PATTERN"
+fi
+
+for i in $(seq 1 "$RUNS"); do
+  ts=$(date +%Y%m%d_%H%M%S)
+  log_file="log/issue_run_${i}_${ts}.log"
+
+  echo "run $i start: $log_file cmd=$BIN ${BIN_ARGS[*]} warmup=${WARMUP_SEC}s after_stream_ready"
+
+  stdbuf -oL -eL "$BIN" "${BIN_ARGS[@]}" > "$log_file" 2>&1 &
+  pid=$!
+
+  start=$(date +%s)
+  reason="timeout"
+  stream_ready_seen=0
+  stream_ready_line=0
+  stream_ready_time=0
+  warmup_done=0
+  warmup_line=0
+
+  while kill -0 "$pid" 2>/dev/null; do
+    now=$(date +%s)
+    elapsed=$((now - start))
+
+    if [ "$stream_ready_seen" -eq 0 ]; then
+      ready_match=$(grep -n -m 1 -F "$STREAM_READY_PATTERN" "$log_file" 2>/dev/null || true)
+      if [ -n "$ready_match" ]; then
+        stream_ready_seen=1
+        stream_ready_line="${ready_match%%:*}"
+        stream_ready_time="$now"
+        echo "run $i stream_ready: line=$stream_ready_line warmup=${WARMUP_SEC}s"
+      fi
+    fi
+
+    if [ "$stream_ready_seen" -eq 1 ] && [ "$((now - stream_ready_time))" -ge "$WARMUP_SEC" ]; then
+      if [ "$warmup_done" -eq 0 ]; then
+        warmup_line=$(wc -l < "$log_file" 2>/dev/null || echo 0)
+        if [ "$warmup_line" -lt "$stream_ready_line" ]; then
+          warmup_line="$stream_ready_line"
+        fi
+        warmup_done=1
+        echo "run $i watch_start: line=$warmup_line"
+      fi
+
+      if [ "$FPS_WATCH_ENABLED" -eq 1 ]; then
+        low_fps_line="$(find_low_fps_line "$log_file" "$((warmup_line + 1))" || true)"
+        if [ -n "$low_fps_line" ]; then
+          reason="fps_below_threshold"
+          echo "run $i issue: target_fps=$TARGET_FPS threshold=$FPS_THRESHOLD line=$low_fps_line"
+          break
+        fi
+      else
+        if tail -n +"$((warmup_line + 1))" "$log_file" 2>/dev/null | tail -n 50 | grep -q "$PATTERN"; then
+          reason="found_${PATTERN}"
+          break
+        fi
+      fi
+    fi
+
+    if [ "$elapsed" -ge "$MAX_SEC" ]; then
+      if [ "$stream_ready_seen" -eq 0 ]; then
+        reason="timeout_before_stream_ready"
+      else
+        reason="timeout_5min"
+      fi
+      break
+    fi
+
+    sleep "$CHECK_SEC"
+  done
+
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "run $i stop: $reason, send INT"
+    kill -INT "$pid" 2>/dev/null
+
+    for _ in $(seq 1 "$KILL_AFTER_SEC"); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 1
+    done
+
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "run $i still alive, send KILL"
+      kill -KILL "$pid" 2>/dev/null
+    fi
+  fi
+
+  wait "$pid" 2>/dev/null
+  rc=$?
+
+  echo "run $i done: reason=$reason exit=$rc log=$log_file"
+  sleep 15
+done

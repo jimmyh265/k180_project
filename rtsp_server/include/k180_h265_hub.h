@@ -1,0 +1,169 @@
+#pragma once
+
+#include <gst/gst.h>
+#include <gst/app/gstappsrc.h>
+#include <gst/rtsp-server/rtsp-server.h>
+
+#include <atomic>
+#include <cstdint>
+#include <string>
+
+#include "k180_stream_key.h"
+#include "k180_gst_dbg.h"
+#include "k180_h264_hub.h"
+#include "k180_osd_shared.h"
+
+// =========================
+// H265 Hub
+// =========================
+namespace k180 {
+	
+struct RecNameCtx {
+    std::string dir;     // 資料夾，例如 "/data"
+    std::string prefix;  // 例如 "s1_1234_"
+    std::string ext;     // 例如 "mp4"
+};
+
+struct H265HubCreateArgs {
+    int in_w = 1920, in_h = 1080;
+    int out_w = 1920, out_h = 1080;
+    int fps = 30;
+    int bitrate_bps = 4'000'000;
+
+    int udp_port = 5600;
+
+    // recording
+    bool enable_record = false;
+    bool record_mp4 = true;
+    std::string record_path;
+    std::string record_prefix;
+
+	k180::osd::OsdShared* osd_shared = nullptr;
+};
+
+struct H265Hub {
+    GstElement* pipeline = nullptr;
+    GstElement* rawsrc   = nullptr;
+    GstElement* enc      = nullptr;
+    GstBus*     bus      = nullptr;
+	std::atomic<uint64_t> t0_ns_{0};
+	std::atomic<uint64_t> last_pts_{0};
+
+    H265HubCreateArgs args_;
+    std::atomic<bool> started{false};
+	
+    bool create(const H265HubCreateArgs& a);
+    bool start();
+    void stop();
+	void stop_rec(int wait_ms);
+	void cleanup_();
+    bool request_idr();
+
+    bool push_nvmm_rgba_buffer(GstBuffer* buf, uint64_t pts_ns = 0);
+	
+#if defined(GST_DBG_MSG) && GST_DBG_MSG
+    k180::gstdbg::RateMon mon_raw_;
+    k180::gstdbg::RateMon mon_enc_;
+    k180::gstdbg::RateMon mon_udp_;
+#endif
+
+	RecNameCtx rec_ctx;
+	
+	k180::osd::OsdShared* osd_shared_ = nullptr;
+};
+
+inline constexpr int kH264Views = 4;                 // V1..V4
+inline constexpr int kH264Streams = kGroups * kH264Views; // 8
+
+inline constexpr int h264_index(StreamGroup g, StreamView v) {
+    // v must be V1..V4
+    return static_cast<int>(g) * kH264Views + (static_cast<int>(v) - 1);
+}
+
+struct StreamFpsGate {
+    std::atomic<int> fps{60};
+    std::atomic<uint64_t> last_ns{0};
+    std::atomic<uint64_t> credit_ns{0};
+
+    void configure(int f) {
+        fps.store(f, std::memory_order_relaxed);
+        reset();
+    }
+
+    void reset() {
+        last_ns.store(0, std::memory_order_relaxed);
+        credit_ns.store(0, std::memory_order_relaxed);
+    }
+
+    bool allow(uint64_t now_ns) {
+        const int f = fps.load(std::memory_order_relaxed);
+        if (f <= 0) return false;
+        if (f >= 60) return true;
+
+        const uint64_t period_ns = 1000000000ull / static_cast<uint64_t>(f);
+        uint64_t last = last_ns.load(std::memory_order_relaxed);
+        if (last == 0 || now_ns < last) {
+            last_ns.store(now_ns, std::memory_order_relaxed);
+            credit_ns.store(period_ns, std::memory_order_relaxed);
+            return true;
+        }
+
+        uint64_t credit = credit_ns.load(std::memory_order_relaxed);
+        credit += now_ns - last;
+        last_ns.store(now_ns, std::memory_order_relaxed);
+
+        const uint64_t max_credit = period_ns * 2;
+        if (credit > max_credit) credit = max_credit;
+
+        if (credit >= period_ns) {
+            credit -= period_ns;
+            credit_ns.store(credit, std::memory_order_relaxed);
+            return true;
+        }
+
+        credit_ns.store(credit, std::memory_order_relaxed);
+        return false;
+    }
+};
+
+// =========================
+// Hub Manager (10 hubs)
+// =========================
+struct HubManager {
+    // ---- NEW: H264 hubs for V1..V4 only ----
+    H264Hub hubs_h264[kH264Streams];
+    int udp_ports_h264[kH264Streams] = {0};
+	std::atomic<int> viewers_h264[kH264Streams];
+	
+    H265Hub hubs[kStreams];
+	int udp_ports[kStreams] = {0};
+    std::atomic<int> viewers[kStreams];       // viewer count per stream
+    std::atomic<bool> record_enabled[kStreams];
+    StreamFpsGate h265_gate[kStreams];
+    StreamFpsGate h264_gate[kH264Streams];
+
+    HubManager();
+
+    // viewer counter API
+    void viewer_inc(StreamKey k);
+    void viewer_dec(StreamKey k);
+    void viewer_inc_h264(StreamKey k);
+    void viewer_dec_h264(StreamKey k);
+    void request_idr_h265(StreamKey k);
+
+    bool want_push(StreamKey k) const;
+	bool want_push_h264(StreamKey k) const;
+    void set_h265_fps(StreamKey k, int fps);
+    void set_h264_fps(StreamKey k, int fps);
+    bool allow_push_h265(StreamKey k, uint64_t now_ns);
+    bool allow_push_h264(StreamKey k, uint64_t now_ns);
+    // helper to set record_enabled based on cfggg.recorded
+    // recorded_mode: 0=off, 1=record s1_1234, 2=record s1_1..4
+    // void set_record_mode(int recorded_mode);
+	void stop_all();
+	void stop_all_rec(int wait_ms);
+	void stop_all_h264();
+	void request_idr_h264(StreamKey k);
+};
+
+}

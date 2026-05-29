@@ -1,0 +1,11 @@
+{
+  "sysinfo":{
+    "fwver":"1.24.0",
+    "fpsver":"30",
+    "max_stream_fps":30,
+    "build_mode":"dev",
+    "git_commit":"unknown",
+    "git_describe":"unknown",
+    "git_dirty":1
+  }
+}

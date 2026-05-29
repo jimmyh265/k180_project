@@ -1,0 +1,58 @@
+{
+    "system_cfg": {
+        "ipaddress": "192.168.0.91",
+        "netmask": 24,
+        "gateway": "192.168.50.1",
+        "cam_num_1_r0": 0,
+        "cam_num_2_r0": 1,
+        "cam_num_3_r0": 2,
+        "cam_num_4_r0": 3,
+        "cam_num_1_r180": 3,
+        "cam_num_2_r180": 2,
+        "cam_num_3_r180": 1,
+        "cam_num_4_r180": 0,
+        "recorded": 1,
+        "objectdet": 0,
+        "draw_det": 1,
+        "draw_trk": 1,
+        "track_fps": 30,
+        "track_frame_rate": 30,
+        "rotate180": 0,
+        "blend_strength": 0.02,
+        "seam_mse_thresh": 130,
+        "mask_cut": 230,
+        "rec_fps_adj": 25,
+        "seam_rate": 5,
+        "rec_dick_size": 30000000000,
+        "pic_w_0_1234": 5743,
+        "pic_h_0_1234": 965,
+        "pic_h_0_cut": 79,
+        "pic_w_180_1234": 5734,
+        "pic_h_180_1234": 990,
+        "pic_h_180_cut": 67,
+        "dev_name": "fd-k180-01"
+    },
+    "stream_1": {
+        "resolution": 1080,
+        "fps": 60,
+        "datarate": 8
+    },
+    "stream_2": {
+        "resolution": 720,
+        "fps": 60,
+        "datarate": 1
+    },
+    "bright_tuner": {
+        "hysteresis_d_threshold": 2,
+        "adjust_cooldown_default": 4,
+        "max_gain_step": 50000,
+        "max_expo_step": 2000,
+        "stable_ok_required": 8,
+        "error_level_div": 5,
+        "k_hi": 1.1,
+        "k_lo": 0.9,
+        "sat_ratio_hi": 0.35,
+        "sat_ratio_lo": 0.35,
+        "mid_val": 110
+    }
+}
