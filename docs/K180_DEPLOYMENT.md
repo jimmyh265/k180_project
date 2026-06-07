@@ -18,12 +18,22 @@
 
 ```text
 k180_release/
+  K180_DEPLOYMENT.md
+  MANIFEST.txt
+
   usr/local/bin/
-    grand_yeah
+    grand_yeah              # 預設 profile，service 實際執行這支
+    grand_yeah_fps60_short
+    grand_yeah_fps60_long
+    grand_yeah_fps30_short
+    grand_yeah_fps30_long
     restful_api_server
 
   usr/local/libexec/k180/
-    gen_fw_dec
+    gen_fw_dec              # 預設 decoder，Web upload 實際執行這支
+    gen_fw_dec_fourd
+    gen_fw_dec_kinghold
+    gen_fw_dec_JongShyn
     modify_sysip_netplan
     reboot_system
     restart_program_camera
@@ -59,12 +69,45 @@ k180_release/
 
 ## 在 Build Machine 產生 Release Package
 
+建議直接使用 repo 內的打包腳本。它會 build `rtsp_server` 四個 profile、`restful_api`、`gen_fw`、`system_helpers`，然後產生 `tar.gz` 與 `zip`。`DEFAULT_RTSP_PROFILE` 決定哪一支版本化 binary 另外複製成 `usr/local/bin/grand_yeah`；`DEFAULT_DEC_USER` 決定哪一支 `gen_fw_dec_*` 另外複製成 `usr/local/libexec/k180/gen_fw_dec`。
+
+```bash
+cd /home/jimnt/k180_project
+
+ADMIN_PASSWORD='replace-with-release-admin-password' \
+YOLO_ENGINE=/home/jimnt/k180_release_assets/yolov8n_fp16.engine \
+DEFAULT_RTSP_PROFILE=fps60_short \
+DEFAULT_DEC_USER=fourd \
+./scripts/package_k180_release.sh
+```
+
+可用的 `DEFAULT_RTSP_PROFILE`：
+
+```text
+fps60_short
+fps60_long
+fps30_short
+fps30_long
+```
+
+`gen_fw_dec_*` 會依照 `gen_fw/build/` 裡實際存在的檔案全部打包。目前 `gen_fw/Makefile` 會產生：
+
+```text
+gen_fw_dec_fourd
+gen_fw_dec_kinghold
+gen_fw_dec_JongShyn
+```
+
+`yolov8n_fp16.engine` 是外部 release asset，不放在 git repo 裡；若路徑不是 `/home/jimnt/k180_release_assets/yolov8n_fp16.engine`，打包時請用 `YOLO_ENGINE=/path/to/yolov8n_fp16.engine` 指定。
+
+以下是腳本內部做的手動流程，保留作為檢查與除錯參考。
+
 在 `/home/jimnt/k180_project` 執行：
 
 ```bash
 cd /home/jimnt/k180_project
 
-make -C rtsp_server fps60-short
+make -C rtsp_server all-profiles
 make -C restful_api
 make -C gen_fw
 make -C system_helpers
@@ -84,9 +127,16 @@ mkdir -p \
   "${RELEASE_ROOT}/etc/systemd/system" \
   "${RELEASE_ROOT}/etc/sudoers.d"
 
+install -m 0755 rtsp_server/build/grand_yeah_fps60_short "${RELEASE_ROOT}/usr/local/bin/grand_yeah_fps60_short"
+install -m 0755 rtsp_server/build/grand_yeah_fps60_long "${RELEASE_ROOT}/usr/local/bin/grand_yeah_fps60_long"
+install -m 0755 rtsp_server/build/grand_yeah_fps30_short "${RELEASE_ROOT}/usr/local/bin/grand_yeah_fps30_short"
+install -m 0755 rtsp_server/build/grand_yeah_fps30_long "${RELEASE_ROOT}/usr/local/bin/grand_yeah_fps30_long"
 install -m 0755 rtsp_server/build/grand_yeah_fps60_short "${RELEASE_ROOT}/usr/local/bin/grand_yeah"
 install -m 0755 restful_api/build/restful_api_server "${RELEASE_ROOT}/usr/local/bin/restful_api_server"
 
+install -m 0750 gen_fw/build/gen_fw_dec_fourd "${RELEASE_ROOT}/usr/local/libexec/k180/gen_fw_dec_fourd"
+install -m 0750 gen_fw/build/gen_fw_dec_kinghold "${RELEASE_ROOT}/usr/local/libexec/k180/gen_fw_dec_kinghold"
+install -m 0750 gen_fw/build/gen_fw_dec_JongShyn "${RELEASE_ROOT}/usr/local/libexec/k180/gen_fw_dec_JongShyn"
 install -m 0750 gen_fw/build/gen_fw_dec_fourd "${RELEASE_ROOT}/usr/local/libexec/k180/gen_fw_dec"
 install -m 0750 system_helpers/build/modify_sysip_netplan "${RELEASE_ROOT}/usr/local/libexec/k180/modify_sysip_netplan"
 install -m 0750 system_helpers/build/reboot_system "${RELEASE_ROOT}/usr/local/libexec/k180/reboot_system"
@@ -248,13 +298,21 @@ sudo install -d -o root -g k180 -m 2770 /data
 
 ### 4. 安裝檔案
 
+`grand_yeah` 與 `gen_fw_dec` 是 service/Web upload 實際使用的固定檔名。Release package 也會保留版本化檔名，方便現場改選不同 profile 或 decoder。
+
 ```bash
 cd /tmp/k180_release
 
 sudo install -m 0755 -o root -g root usr/local/bin/grand_yeah /usr/local/bin/grand_yeah
+for bin in usr/local/bin/grand_yeah_fps60_short usr/local/bin/grand_yeah_fps60_long usr/local/bin/grand_yeah_fps30_short usr/local/bin/grand_yeah_fps30_long; do
+  sudo install -m 0755 -o root -g root "$bin" "/usr/local/bin/$(basename "$bin")"
+done
 sudo install -m 0755 -o root -g root usr/local/bin/restful_api_server /usr/local/bin/restful_api_server
 
 sudo install -m 0750 -o root -g k180 usr/local/libexec/k180/gen_fw_dec /usr/local/libexec/k180/gen_fw_dec
+for bin in usr/local/libexec/k180/gen_fw_dec_*; do
+  sudo install -m 0750 -o root -g k180 "$bin" "/usr/local/libexec/k180/$(basename "$bin")"
+done
 sudo install -m 0750 -o root -g k180 usr/local/libexec/k180/modify_sysip_netplan /usr/local/libexec/k180/modify_sysip_netplan
 sudo install -m 0750 -o root -g k180 usr/local/libexec/k180/reboot_system /usr/local/libexec/k180/reboot_system
 sudo install -m 0750 -o root -g k180 usr/local/libexec/k180/restart_program_camera /usr/local/libexec/k180/restart_program_camera
@@ -322,9 +380,16 @@ sudo stat -c '%A %U:%G %n' \
   /var/lib/k180/tmp_rec_zip/zip_batch.lock \
   /usr/local/share/k180/yolov8n_fp16.engine \
   /usr/local/bin/grand_yeah \
+  /usr/local/bin/grand_yeah_fps60_short \
+  /usr/local/bin/grand_yeah_fps60_long \
+  /usr/local/bin/grand_yeah_fps30_short \
+  /usr/local/bin/grand_yeah_fps30_long \
   /usr/local/bin/restful_api_server \
   /usr/local/libexec/k180 \
   /usr/local/libexec/k180/gen_fw_dec \
+  /usr/local/libexec/k180/gen_fw_dec_fourd \
+  /usr/local/libexec/k180/gen_fw_dec_kinghold \
+  /usr/local/libexec/k180/gen_fw_dec_JongShyn \
   /usr/local/libexec/k180/modify_sysip_netplan \
   /usr/local/libexec/k180/reboot_system \
   /usr/local/libexec/k180/restart_program_camera \
@@ -353,9 +418,22 @@ sudo install -m 0755 -o root -g root ./grand_yeah /usr/local/bin/grand_yeah
 sudo systemctl restart grand_yeah.service
 ```
 
+如果已經安裝 full package，只要改選另一個 profile，可以用版本化檔案覆蓋固定 service 檔名：
+
+```bash
+sudo install -m 0755 -o root -g root /usr/local/bin/grand_yeah_fps30_long /usr/local/bin/grand_yeah
+sudo systemctl restart grand_yeah.service
+```
+
 ```bash
 sudo install -m 0755 -o root -g root ./restful_api_server /usr/local/bin/restful_api_server
 sudo systemctl restart restful_api.service
+```
+
+如果要改選不同 decoder，覆蓋 Web upload 會呼叫的固定檔名：
+
+```bash
+sudo install -m 0750 -o root -g k180 /usr/local/libexec/k180/gen_fw_dec_kinghold /usr/local/libexec/k180/gen_fw_dec
 ```
 
 ```bash
